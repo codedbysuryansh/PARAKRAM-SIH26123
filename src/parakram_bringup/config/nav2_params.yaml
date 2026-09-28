@@ -27,6 +27,13 @@
 # laterally (one robot ended 1.4 cm from a shelf) although the scans matched the map at ground
 # truth to 1.6 cm mean abs error (= the 2 cm lidar noise). sigma_hit 0.08 / z_hit 0.9 matches the
 # real sensor + 5 cm map; updates every 5 cm / ~6 deg. Re-tune on hardware (09) with real noise.
+# Laser model (measured in 02, dense multi-robot traffic): the map's shelves are FILLED, and the
+# likelihood field scores a beam end point that lands inside an obstacle as a perfect hit. When one
+# aisle wall stops constraining the estimate (a robot parked in a cross-aisle mouth, or the wall
+# nearer than the 0.12 m min range), shifting the estimate towards the other wall costs nothing;
+# AMCL then held robots on the aisle centre line while they veered 0.2 m and collided. The beam
+# model ray-casts the expected range, so a surface both too near and too far is penalized, and
+# unexpected short readings (other robots) fall under z_short.
 amcl:
   ros__parameters:
     base_frame_id: "base_footprint"
@@ -60,7 +67,7 @@ amcl:
     laser_likelihood_max_dist: 1.0
     laser_max_range: 3.5            # LDS-01/02 usable range
     laser_min_range: 0.12
-    laser_model_type: "likelihood_field"
+    laser_model_type: "beam"         # see the laser model note above (02)
     max_beams: 90
     max_particles: 2000
     min_particles: 500
@@ -94,6 +101,8 @@ bt_navigator:
     navigate_through_poses:
       plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
       enable_groot_monitoring: false
+    # Coordination-safe tree (CLAUDE_CODE/02): per-cell waypoints, no Spin/BackUp recoveries.
+    default_nav_through_poses_bt_xml: "$(find-pkg-share parakram_bringup)/behavior_trees/navigate_through_poses_coordinated.xml"
     error_code_names:
       - compute_path_error_code
       - follow_path_error_code
@@ -118,7 +127,7 @@ controller_server:
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       stateful: true
-      xy_goal_tolerance: 0.10         # grid cells are 0.40 m; stop near the cell centre
+      xy_goal_tolerance: 0.05         # 0.40 m cells: a waiting robot must sit inside its cell
       yaw_goal_tolerance: 0.25
     # Regulated Pure Pursuit: light and predictable in 1-cell aisles (RESEARCH/03 §3, §4).
     FollowPath:

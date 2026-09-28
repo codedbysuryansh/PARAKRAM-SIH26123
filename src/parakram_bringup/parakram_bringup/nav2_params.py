@@ -2,8 +2,23 @@
 
 import copy
 import os
+import re
 
 import yaml
+
+_FIND_PKG_SHARE = re.compile(r'\$\(find-pkg-share ([A-Za-z0-9_]+)\)')
+
+
+def resolve_substitutions(value):
+    """Recursively replace ``$(find-pkg-share pkg)`` in string values with the share path."""
+    if isinstance(value, dict):
+        return {k: resolve_substitutions(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [resolve_substitutions(v) for v in value]
+    if isinstance(value, str) and '$(find-pkg-share' in value:
+        from ament_index_python.packages import get_package_share_directory
+        return _FIND_PKG_SHARE.sub(lambda m: get_package_share_directory(m.group(1)), value)
+    return value
 
 
 def template_path():
@@ -20,7 +35,7 @@ def render_robot_params(template, namespace, initial_pose):
     ``template`` is the parsed template (node names as top-level keys); the result nests it under
     ``namespace`` (so ``/robot1/amcl`` matches) and sets AMCL's initial pose ``(x, y, yaw)``.
     """
-    params = copy.deepcopy(template)
+    params = resolve_substitutions(copy.deepcopy(template))
     amcl = params['amcl']['ros__parameters']
     x, y, yaw = initial_pose
     amcl['set_initial_pose'] = True

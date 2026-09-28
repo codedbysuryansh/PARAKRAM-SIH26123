@@ -1,0 +1,10 @@
+# Temporary fixed crossing assignments (CLAUDE_CODE/02) until Contract-Net task allocation (04).
+# Each robot cycles through its own list locally (no central assigner). Cells are [r, c] in
+# parakram_sim/config/warehouse_grid.yaml. "intersection": every leg crosses the central junction
+# (5, 6); robot1 and robot2 meet head-on in the 1-cell row-5 aisle, robot3 crosses them N-S.
+# Endpoints are pairwise distinct so no two robots ever share a goal cell.
+intersection:
+  robot1: [[5, 9], [5, 4]]     # W arm -> east past the junction, and back
+  robot2: [[5, 3], [5, 8]]     # E arm -> west past the junction, and back
+  robot3: [[7, 6], [3, 6]]     # S arm -> N arm through the junction, and back
+  robot4: [[3, 6], [7, 6]]     # (only with n_robots:=4) N arm -> S arm

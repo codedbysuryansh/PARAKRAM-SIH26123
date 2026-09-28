@@ -63,6 +63,16 @@ def test_inflation_exceeds_footprint(template):
         assert p['inflation_layer']['inflation_radius'] >= 0.138 + 0.1
 
 
+def test_amcl_uses_beam_model(template):
+    """
+    CLAUDE_CODE/02 finding: the map's shelves are filled.
+
+    The likelihood field scores an end point inside an obstacle as a perfect hit, so in dense
+    multi-robot traffic AMCL could drift 0.2 m sideways; the beam model ray-casts.
+    """
+    assert template['amcl']['ros__parameters']['laser_model_type'] == 'beam'
+
+
 def test_render_robot_params(template, tmp_path):
     out = render_robot_params(template, '/robot2/', (0.8, 0.0, 3.14159))
     assert list(out) == ['robot2']
