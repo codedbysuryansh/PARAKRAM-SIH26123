@@ -1,0 +1,4 @@
+# ReAuction.srv — internal trigger from fault layer -> tasks layer
+string dead_robot_id
+---
+uint32 tasks_reannounced

@@ -1,0 +1,306 @@
+# PARAKRAM — Nav2 parameters for ONE robot (TurtleBot3 Burger), ROS 2 Jazzy / Nav2 1.3.x.
+#
+# This is the single, namespace-agnostic template shared by simulation AND hardware
+# (CLAUDE_CODE/01 "sim-to-real hygiene": the hardware launch reuses this file unchanged).
+# fleet_sim.launch.py renders one namespaced copy per robot into
+# bench/logs/<run_id>/generated/nav2_<robot>.yaml (root key = namespace, AMCL initial pose =
+# the robot's spawn cell) and archives it with the run. use_sim_time is NOT set here; the launch
+# file sets it (true in sim, false on hardware).
+#
+# Topic rules (namespacing): every robot-local topic is RELATIVE (resolves to /<ns>/...). Only the
+# shared map is absolute (/map). TF is isolated per robot (/<ns>/tf) with un-prefixed frames.
+#
+# cmd_vel chain (Nav2 default order; the reactive safety layer is the LAST gate, CLAUDE_CODE/00):
+#   controller_server --cmd_vel_nav--> velocity_smoother --cmd_vel_smoothed--> collision_monitor
+#   --cmd_vel--> base            (behavior_server also publishes on cmd_vel_nav)
+#
+# Rotation limits (all layers): 0.6 rad/s, 1.6 rad/s^2. Measured in 01 on this Gazebo model: an
+# in-place turn at 1.2 rad/s leaves the body 30-40 deg behind the wheel odometry (it catches up
+# only after the turn), which fed AMCL a corrupted heading and drove robots into shelf corners;
+# at 0.6 rad/s the transient is 6-8 deg, which AMCL absorbs. Throughput cost: ~2.5 s per 180 deg.
+#
+# Footprint: bounding rectangle of the Burger (turtlebot3_description) in base_link:
+#   x in [-0.105, 0.040], y in [-0.090, 0.090]  -> circumscribed radius 0.138 m.
+
+# AMCL sensor model (measured in 01): with the Nav2 default-ish sigma_hit 0.2 / z_hit 0.5 /
+# z_rand 0.5 the likelihood field is almost flat across a 0.5 m aisle, and AMCL drifted 12-15 cm
+# laterally (one robot ended 1.4 cm from a shelf) although the scans matched the map at ground
+# truth to 1.6 cm mean abs error (= the 2 cm lidar noise). sigma_hit 0.08 / z_hit 0.9 matches the
+# real sensor + 5 cm map; updates every 5 cm / ~6 deg. Re-tune on hardware (09) with real noise.
+amcl:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    map_topic: "/map"               # the shared map (one map_server for the fleet in sim)
+    scan_topic: "scan"
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    # Initial pose: filled per robot from the scenario start cell by the launch file.
+    set_initial_pose: true
+    always_reset_initial_pose: false
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+    # Odometry noise (sim-measured: <2% rotation, <1% translation error at the 0.6 rad/s limit).
+    # alpha4 0.2 spread particles ~4.5 cm per 0.1 rad of in-place turning -> estimate drift.
+    alpha1: 0.1
+    alpha2: 0.1
+    alpha3: 0.1
+    alpha4: 0.05
+    alpha5: 0.2
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 1.0
+    laser_max_range: 3.5            # LDS-01/02 usable range
+    laser_min_range: 0.12
+    laser_model_type: "likelihood_field"
+    max_beams: 90
+    max_particles: 2000
+    min_particles: 500
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    save_pose_rate: 0.5
+    sigma_hit: 0.08                 # see AMCL sensor-model note above
+    update_min_a: 0.10
+    update_min_d: 0.05
+    z_hit: 0.9
+    z_max: 0.05
+    z_rand: 0.1
+    z_short: 0.05
+
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    action_server_result_timeout: 900.0
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+      enable_groot_monitoring: false   # N stacks would collide on the groot port
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+      enable_groot_monitoring: false
+    error_code_names:
+      - compute_path_error_code
+      - follow_path_error_code
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    costmap_update_timeout: 0.30
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    odom_topic: odom
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+    use_realtime_priority: false
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.25
+      movement_time_allowance: 15.0
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      stateful: true
+      xy_goal_tolerance: 0.10         # grid cells are 0.40 m; stop near the cell centre
+      yaw_goal_tolerance: 0.25
+    # Regulated Pure Pursuit: light and predictable in 1-cell aisles (RESEARCH/03 §3, §4).
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.18        # Burger max is 0.22 m/s
+      lookahead_dist: 0.25            # short: pure pursuit cuts corners ~ lookahead (0.5 m aisles)
+      min_lookahead_dist: 0.18
+      max_lookahead_dist: 0.60
+      lookahead_time: 1.5
+      rotate_to_heading_angular_vel: 0.6
+      transform_tolerance: 0.2
+      use_velocity_scaled_lookahead_dist: false
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.40
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.60
+      regulated_linear_scaling_min_speed: 0.06
+      use_fixed_curvature_lookahead: false
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.6
+      allow_reversing: false
+      max_angular_accel: 1.6
+      max_robot_pose_search_dist: 10.0
+      interpolate_curvature_after_goal: false
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      transform_tolerance: 0.5
+      rolling_window: true
+      width: 2
+      height: 2
+      resolution: 0.05
+      footprint: "[[0.040, 0.090], [0.040, -0.090], [-0.105, -0.090], [-0.105, 0.090]]"
+      footprint_padding: 0.01
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          inf_is_valid: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.30         # >= circumscribed radius 0.138 + margin
+        cost_scaling_factor: 6.0
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 0.5
+      resolution: 0.05
+      track_unknown_space: true
+      footprint: "[[0.040, 0.090], [0.040, -0.090], [-0.105, -0.090], [-0.105, 0.090]]"
+      footprint_padding: 0.01
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_topic: /map
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: scan
+          data_type: "LaserScan"
+          marking: true
+          clearing: true
+          inf_is_valid: true
+          max_obstacle_height: 2.0
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.30
+        cost_scaling_factor: 6.0
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 10.0
+    planner_plugins: ["GridBased"]
+    costmap_update_timeout: 1.0
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.25
+      use_astar: true
+      allow_unknown: false
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 0.2
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.6
+    min_rotational_vel: 0.3
+    rotational_acc_lim: 1.6
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    stamp_smoothed_velocity_with_smoothing_time: false
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.22, 0.0, 0.6]
+    min_velocity: [-0.22, 0.0, -0.6]
+    max_accel: [1.0, 0.0, 1.6]
+    max_decel: [-1.0, 0.0, -1.6]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# PLACEHOLDER (CLAUDE_CODE/01): wired into the cmd_vel chain now (it is the last gate before the
+# base) so the topology is final; CLAUDE_CODE/03 replaces this with the real comms-free safety
+# configuration (+ NH-ORCA/CBF filter). In 01 it is a PASS-THROUGH (polygon disabled).
+# Lesson for 03 (measured in 01): a naive "stop" zone (0.20 m ahead, +/-0.10 m) froze robots in
+# the 0.5 m aisles -- a stop action also blocks in-place rotation and Nav2's recoveries, so once a
+# shelf entered the zone the robot could never turn away (safety-by-deadlock), and the wheels then
+# fought the shelves during recoveries, corrupting odometry. 03 must avoid that failure mode.
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    polygons: ["PlaceholderStop"]
+    PlaceholderStop:
+      type: "polygon"
+      points: "[[0.20, 0.10], [0.20, -0.10], [0.045, -0.10], [0.045, 0.10]]"
+      action_type: "stop"
+      min_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
+      enabled: false                  # 01 placeholder: pass-through (see note above)
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "scan"
+      enabled: true
