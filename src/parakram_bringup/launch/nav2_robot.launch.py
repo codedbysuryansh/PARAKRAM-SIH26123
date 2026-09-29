@@ -2,8 +2,12 @@
 ONE namespaced Nav2 stack for one robot (identical in sim and on hardware).
 
 Nodes (all under ``<namespace>``): amcl, planner_server, controller_server (RPP),
-behavior_server, bt_navigator, velocity_smoother, collision_monitor (placeholder, wired in
-CLAUDE_CODE/03), and two lifecycle managers. The map_server is shared and started elsewhere
+behavior_server, bt_navigator, velocity_smoother, and two lifecycle managers. The cmd_vel chain
+(CLAUDE_CODE/03: controller -> collision_monitor -> velocity_smoother -> base) is
+controller/behaviors -> cmd_vel_nav -> [parakram_safety: orca_filter -> cmd_vel_safe ->
+collision_monitor] -> cmd_vel_monitored -> velocity_smoother -> cmd_vel -> base; the safety layer
+is brought up by parakram_safety/launch/safety.launch.py, and without it nothing reaches the base
+(fail-safe, never a bypass). The map_server is shared and started elsewhere
 (fleet_sim.launch.py in sim). TF is isolated per robot: /tf -> /<ns>/tf, /tf_static ->
 /<ns>/tf_static, frame ids un-prefixed (no tf_prefix).
 
@@ -32,6 +36,8 @@ import yaml
 
 TF_REMAPS = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 CMD_VEL_NAV = [('cmd_vel', 'cmd_vel_nav')]
+# the smoother is the last stage: it takes the collision monitor's output and drives the base
+SMOOTHER_REMAPS = [('cmd_vel', 'cmd_vel_monitored'), ('cmd_vel_smoothed', 'cmd_vel')]
 # (package, executable, component plugin, node name, extra remaps)
 NAV2_NODES = [
     ('nav2_amcl', 'amcl', 'nav2_amcl::AmclNode', 'amcl', []),
@@ -41,16 +47,13 @@ NAV2_NODES = [
     ('nav2_behaviors', 'behavior_server', 'behavior_server::BehaviorServer', 'behavior_server',
      CMD_VEL_NAV),
     ('nav2_bt_navigator', 'bt_navigator', 'nav2_bt_navigator::BtNavigator', 'bt_navigator', []),
-    # Subscribes cmd_vel_nav, publishes cmd_vel_smoothed.
+    # Subscribes cmd_vel_monitored (the safety layer's output), publishes cmd_vel (the base).
     ('nav2_velocity_smoother', 'velocity_smoother', 'nav2_velocity_smoother::VelocitySmoother',
-     'velocity_smoother', CMD_VEL_NAV),
-    # Subscribes cmd_vel_smoothed, publishes cmd_vel (the last gate before the base).
-    ('nav2_collision_monitor', 'collision_monitor', 'nav2_collision_monitor::CollisionMonitor',
-     'collision_monitor', []),
+     'velocity_smoother', SMOOTHER_REMAPS),
 ]
 LOCALIZATION_NODES = ['amcl']
 NAVIGATION_NODES = ['planner_server', 'controller_server', 'behavior_server', 'bt_navigator',
-                    'velocity_smoother', 'collision_monitor']
+                    'velocity_smoother']
 
 
 def _truthy(value):

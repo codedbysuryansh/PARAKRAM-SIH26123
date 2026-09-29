@@ -10,6 +10,11 @@ Out: ``/<ns>/state`` + ``/<ns>/intent`` (BEST_EFFORT, every tick), ``/<ns>/coord
      ``/<ns>/reroute_request``, and Nav2 ``NavigateThroughPoses`` goals over the HELD cells only.
      Never publishes cmd_vel.
 
+``reactive_only:=true`` disables conflict resolution (the CLAUDE_CODE/03 acceptance setup,
+"coordination running, conflict resolution disabled"): the node still ticks and publishes
+state / intent / coord_status, but Nav2 gets the whole shortest path to the goal, ignoring every
+peer, so only the reactive safety layer stands between robots. Default ``false`` (02 behaviour).
+
 Until CLAUDE_CODE/04 provides task allocation, ``fixed_goals`` (flattened ``[r0, c0, r1, ...]``)
 gives the robot a local, temporary cyclic assignment for ``fixed_assign_duration`` seconds.
 Per tick it logs ``bench/logs/<run_id>/coord_<ns>.csv``.
@@ -32,6 +37,7 @@ from parakram_coord.pibt_rule import (committed_claims, CoordParams, occupied_ce
                                       PibtCoordinator)
 from parakram_coord.reservation_table import Entry, ReservationTable
 from parakram_coord.roster import Roster
+from parakram_coord.spacetime_astar import shortest_path
 from parakram_msgs.msg import CoordStatus, Intent, RobotState
 from parakram_sim.grid_utils import default_grid_path, WarehouseGrid
 import rclpy
@@ -102,6 +108,7 @@ class CoordinationNode(Node):
         log_dir = dp('log_dir', '').value
         grid_yaml = dp('grid_yaml', '').value
         roster_scan = float(dp('roster_scan_period', 5.0).value)
+        self.reactive_only = bool(dp('reactive_only', False).value)
 
         self.grid = WarehouseGrid.from_yaml(grid_yaml or default_grid_path())
         self.core = PibtCoordinator(self.robot_id, self.grid, self.params)
@@ -153,7 +160,8 @@ class CoordinationNode(Node):
         self.get_logger().info(
             f'coordination {self.robot_id}: {tick_hz:.0f} Hz, W={self.params.window}, '
             f'k={self.params.reserve_k}, lease={self.params.lease_ttl}s, '
-            f'fixed goals={self.fixed_goals} for {self.fixed_duration:.0f}s')
+            f'fixed goals={self.fixed_goals} for {self.fixed_duration:.0f}s'
+            + (' -- REACTIVE-ONLY: conflict resolution disabled' if self.reactive_only else ''))
 
     # ------------------------------------------------------------------ inputs
     def _now(self):
@@ -322,9 +330,14 @@ class CoordinationNode(Node):
             self.sent_cells if self.goal_active else (), self.params.occupancy_radius,
             self.commit_margin)
         res = self.core.tick(now, center, occ, self.table, committed)
+        authority = res.authority
+        if self.reactive_only:
+            goal = self.core.goal
+            authority = [center] if goal is None or goal == center else shortest_path(
+                center, goal, self.core._nbrs, self.core._h(goal))
         if res.goal_reached_event:
             self._assign_next(now)
-        self._update_nav(res.authority, now, pose, occ)
+        self._update_nav(authority, now, pose, occ)
         tick_ms = (time.perf_counter() - t0) * 1000.0
         self._publish(now, pose, res, tick_ms)
 

@@ -1,0 +1,122 @@
+# PARAKRAM reactive safety layer, Part A (CLAUDE_CODE/03): Nav2 Collision Monitor, per robot.
+#
+# Namespace-agnostic: every topic is relative, so the same section serves /robot1, /robot2, ...
+# parakram_safety/launch/safety.launch.py starts one monitor per robot (in its namespace) next to
+# the Part-B filter and wires the chain of the work order, controller -> collision_monitor ->
+# velocity_smoother -> base:
+#
+#   controller/behaviors --cmd_vel_nav--> orca_filter (Part B) --cmd_vel_safe--> collision_monitor
+#   (this) --cmd_vel_monitored--> velocity_smoother --cmd_vel--> base
+#
+# The smoother after it only rate-limits; it cannot create motion its input does not ask for, but
+# it stretches a stop: from 0.22 m/s at its max_decel of 1.0 m/s^2 by 0.024 m (in the stop reach).
+#
+# Input is the onboard lidar ONLY (no network): a silent / partitioned / dead peer is avoided as a
+# sensed obstacle. A lidar dropout longer than source_timeout makes the scan source invalid and the
+# monitor then stops the robot (fail-safe).
+#
+# Geometry (base_footprint frame; Burger footprint x in [-0.105, 0.040], y in [-0.090, 0.090];
+# the lidar sits at x = -0.032 and sees nothing closer than 0.12 m). Peers are seen only by their
+# lidar turret, their body reaches up to ~0.07 m beyond it. Aisles are 0.40 m wide, so a centred
+# robot has shelves ~0.11 m from its sides: every zone stays within +/-0.10 m laterally.
+# Lesson from 01: a plain stop zone froze robots in the aisles (a "stop" also blocks in-place
+# rotation, so a robot could never turn away). The stop/slowdown zones here are VELOCITY polygons:
+# they act only on translation towards what is ahead of / behind the robot; turning in place
+# selects an empty polygon, so a robot can always rotate away from what stopped it.
+collision_monitor:
+  ros__parameters:
+    # Brings itself up (configure + activate inside its own process) and runs without a
+    # lifecycle-manager bond: 01 measured rmw_fastrtps dropping lifecycle change_state responses
+    # between processes, which left nodes configured-but-inactive.
+    autostart_node: true
+    bond_heartbeat_period: 0.0
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_safe"
+    cmd_vel_out_topic: "cmd_vel_monitored"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0             # [s] lidar is 5 Hz: 5 missed scans -> source invalid -> stop
+    base_shift_correction: true     # compensate own motion since the scan was taken
+    stop_pub_timeout: 2.0
+    polygons: ["StopZone", "SlowdownZone", "FootprintApproach"]
+    # Hard stop for translation towards an obstacle close ahead (behind when reversing).
+    # 0.19 m beyond the front edge = peer body beyond its sensed turret (<= 0.07) + one scan of
+    # closing motion at 2 x 0.18 m/s (0.07) + stopping / latency margin (0.05, of which the
+    # smoother's deceleration after this monitor takes 0.024).
+    StopZone:
+      type: "velocity_polygon"
+      action_type: "stop"
+      min_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
+      enabled: true
+      holonomic: false
+      velocity_polygons: ["forward", "backward", "rotating"]
+      forward:
+        points: "[[0.230, 0.100], [0.230, -0.100], [0.040, -0.100], [0.040, 0.100]]"
+        linear_min: 0.01
+        linear_max: 1.0
+        theta_min: -2.0
+        theta_max: 2.0
+      backward:
+        points: "[[-0.105, 0.100], [-0.105, -0.100], [-0.295, -0.100], [-0.295, 0.100]]"
+        linear_min: -1.0
+        linear_max: -0.01
+        theta_min: -2.0
+        theta_max: 2.0
+      # Fallback (last): turning in place / standing still. A sliver inside the lidar's blind
+      # radius, i.e. it can never contain a scan point: rotation is never stopped by this zone.
+      # (This Nav2 version rejects a 3-point velocity sub-polygon, hence 4 points.)
+      rotating:
+        points: "[[-0.020, 0.005], [-0.020, -0.005], [-0.030, -0.005], [-0.030, 0.005]]"
+        linear_min: -1.0
+        linear_max: 1.0
+        theta_min: -2.0
+        theta_max: 2.0
+    # Slow down (x0.5) when something is within 0.31 m ahead of the front edge.
+    SlowdownZone:
+      type: "velocity_polygon"
+      action_type: "slowdown"
+      slowdown_ratio: 0.5
+      min_points: 3
+      visualize: true
+      polygon_pub_topic: "polygon_slowdown"
+      enabled: true
+      holonomic: false
+      velocity_polygons: ["forward", "backward", "rotating"]
+      forward:
+        points: "[[0.350, 0.100], [0.350, -0.100], [0.040, -0.100], [0.040, 0.100]]"
+        linear_min: 0.01
+        linear_max: 1.0
+        theta_min: -2.0
+        theta_max: 2.0
+      backward:
+        points: "[[-0.105, 0.100], [-0.105, -0.100], [-0.415, -0.100], [-0.415, 0.100]]"
+        linear_min: -1.0
+        linear_max: -0.01
+        theta_min: -2.0
+        theta_max: 2.0
+      rotating:
+        points: "[[-0.020, 0.005], [-0.020, -0.005], [-0.030, -0.005], [-0.030, 0.005]]"
+        linear_min: -1.0
+        linear_max: 1.0
+        theta_min: -2.0
+        theta_max: 2.0
+    # Time-to-collision guard on the exact footprint along the commanded motion (translation AND
+    # rotation): scales the command so a sensed point is never hit within 1 s. Protects the body
+    # against shelves and walls as well as peers.
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      points: "[[0.040, 0.090], [0.040, -0.090], [-0.105, -0.090], [-0.105, 0.090]]"
+      time_before_collision: 1.0
+      simulation_time_step: 0.05
+      min_points: 3
+      visualize: false
+      enabled: true
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "scan"
+      enabled: true

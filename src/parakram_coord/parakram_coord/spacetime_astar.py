@@ -39,6 +39,25 @@ def distance_field(sources, neighbors, passable=None):
     return dist
 
 
+def shortest_path(start, goal, neighbors, dist=None):
+    """
+    Return a shortest path ``[start, ..., goal]`` on the static grid, ignoring other robots.
+
+    Descends the exact BFS distance field of ``goal`` (``dist``, computed if not given); ties go
+    to the smallest cell so the path is deterministic. Returns ``[start]`` if ``goal`` is
+    unreachable.
+    """
+    if dist is None:
+        dist = distance_field([goal], neighbors)
+    if start not in dist:
+        return [start]
+    path = [start]
+    while path[-1] != goal:
+        path.append(min((n for n in neighbors(path[-1]) if dist.get(n, math.inf) < dist[path[-1]]),
+                        key=lambda n: (dist[n], n)))
+    return path
+
+
 def spacetime_astar(start, goal, window, neighbors, heuristic, blocked=frozenset(),
                     blocked_st=frozenset(), blocked_edges=frozenset(), goal_test=None,
                     max_expansions=200000):

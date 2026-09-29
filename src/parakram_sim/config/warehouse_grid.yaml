@@ -152,3 +152,20 @@ scenarios:
       - [[5, 9, -90], [0, 9, -90]]     # robot2: east 1, then south down aisle c9
       - [[0, 6, 180], [0, 3, 180]]     # robot3: south down c6, then west along r0
       - [[10, 6, 0], [10, 9, 0]]       # robot4: north up c6, then east along r10
+  headon:
+    description: >-
+      Coordination-free safety test (CLAUDE_CODE/03 acceptance). robot1 and robot2 face each other
+      in the main east-west aisle (row 5); robot3 (and robot4) come along the central column c6;
+      every goal lies beyond the central junction (5, 6), so with conflict resolution disabled
+      all robots drive straight at each other. The routes deliberately CONFLICT (unlike the 01
+      smoke-test routes of 'intersection').
+    start_cells:
+      - [5, 2, 0]      # robot1: west end of row 5, facing east
+      - [5, 10, 180]   # robot2: east end of row 5, facing west
+      - [0, 6, 90]     # robot3: south end of column 6, facing north
+      - [10, 6, -90]   # robot4: north end of column 6, facing south
+    test_goals:
+      - [[5, 10, 0]]
+      - [[5, 2, 180]]
+      - [[10, 6, 90]]
+      - [[0, 6, -90]]

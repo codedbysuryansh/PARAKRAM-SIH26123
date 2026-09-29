@@ -4,7 +4,7 @@ from collections import deque
 import os
 import random
 
-from parakram_coord.spacetime_astar import (compress, distance_field, moving_prefix,
+from parakram_coord.spacetime_astar import (compress, distance_field, moving_prefix, shortest_path,
                                             spacetime_astar)
 from parakram_sim.grid_utils import WarehouseGrid
 import pytest
@@ -150,3 +150,14 @@ def test_compress_and_moving_prefix():
     assert compress(path) == [(0, 0), (0, 1), (0, 2)]
     assert moving_prefix(path) == [(0, 1)]
     assert moving_prefix([(0, 0)]) == []
+
+
+def test_shortest_path_ignores_robots_and_is_shortest(warehouse):
+    nbrs = lambda c: warehouse.neighbors(*c)          # noqa: E731
+    for start, goal in (((5, 2), (5, 10)), ((0, 6), (10, 6)), ((5, 4), (3, 6))):
+        path = shortest_path(start, goal, nbrs)
+        assert path[0] == start and path[-1] == goal
+        assert len(path) - 1 == distance_field([goal], nbrs)[start]
+        assert all(b in nbrs(a) for a, b in zip(path, path[1:]))
+        assert path == shortest_path(start, goal, nbrs)   # deterministic
+    assert shortest_path((5, 5), (5, 5), nbrs) == [(5, 5)]

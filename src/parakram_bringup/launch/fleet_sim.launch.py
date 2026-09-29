@@ -7,6 +7,13 @@ Writes ``bench/logs/<run_id>/run_manifest.json`` (run_id, seed, n_robots, scenar
 params hash) and archives every generated per-robot file under ``bench/logs/<run_id>/generated``.
 ``bench/logs/latest`` points at the newest run.
 
+Every robot gets the reactive safety layer (CLAUDE_CODE/03): with ``safety:=true`` (default)
+``parakram_safety/launch/safety.launch.py`` starts each robot's collision monitor and NH-ORCA
+filter, which close the cmd_vel chain in front of the velocity smoother. ``safety:=false`` leaves
+them out (start that launch file separately: the work order's two-step acceptance flow); until it
+runs no command reaches a base. ``safety_enabled:=false`` is the A1 ablation (the whole safety
+layer bypassed).
+
 Launch args (CLAUDE_CODE/00): ``seed``, ``loss``, ``n_robots``, ``scenario``. Packet-loss
 injection does not exist until CLAUDE_CODE/05, so any ``loss`` other than 0 is REFUSED rather
 than silently ignored (a run must never be labelled with a loss level it did not have).
@@ -37,7 +44,7 @@ def _setup(context):
     cfg = {k: LaunchConfiguration(k).perform(context) for k in (
         'n_robots', 'scenario', 'seed', 'loss', 'gui', 'render_engine', 'software_gl',
         'lidar_noise_std', 'lidar_rate', 'log_level', 'run_id', 'nav2_start_delay',
-        'nav2_stagger', 'use_composition', 'clock_period')}
+        'nav2_stagger', 'use_composition', 'clock_period', 'safety', 'safety_enabled')}
     n_robots = int(cfg['n_robots'])
     seed = int(cfg['seed'])
     loss = float(cfg['loss'])
@@ -52,6 +59,8 @@ def _setup(context):
     world_file = os.path.join(sim_share, 'worlds', 'warehouse.sdf')
     map_file = os.path.join(bringup_share, 'maps', 'warehouse.yaml')
     nav2_template = os.path.join(bringup_share, 'config', 'nav2_params.yaml')
+    safety_share = get_package_share_directory('parakram_safety')
+    monitor_file = os.path.join(safety_share, 'config', 'collision_monitor.yaml')
 
     run_id = cfg['run_id'] or rm.new_run_id()
     log_root = rm.default_log_root()
@@ -66,12 +75,13 @@ def _setup(context):
 
     settings = {k: cfg[k] for k in ('n_robots', 'scenario', 'render_engine', 'software_gl',
                                     'lidar_noise_std', 'lidar_rate', 'use_composition',
-                                    'clock_period')}
+                                    'clock_period', 'safety', 'safety_enabled')}
     hashed_files = {
         'parakram_sim/config/warehouse_grid.yaml': grid_file,
         'parakram_sim/worlds/warehouse.sdf': world_file,
         'parakram_sim/models/parakram_burger/model.sdf.in': robot_sdf_template_path(),
         'parakram_bringup/config/nav2_params.yaml': nav2_template,
+        'parakram_safety/config/collision_monitor.yaml': monitor_file,
         'parakram_bringup/maps/warehouse.yaml': map_file,
         'parakram_bringup/maps/warehouse.pgm': os.path.join(bringup_share, 'maps',
                                                             'warehouse.pgm'),
@@ -138,6 +148,14 @@ def _setup(context):
                                   'use_sim_time': use_sim_time,
                                   'use_composition': cfg['use_composition'],
                                   'log_level': cfg['log_level']}.items())]))
+    if _truthy(cfg['safety']):
+        # the per-robot collision monitors and safety filters (they wait for their robot's topics)
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(safety_share, 'launch',
+                                                       'safety.launch.py')),
+            launch_arguments={'n_robots': str(n_robots), 'run_dir': run_dir,
+                              'safety_enabled': cfg['safety_enabled'],
+                              'use_sim_time': use_sim_time}.items()))
     with open(os.path.join(gen_dir, 'launch_config.json'), 'w') as f:
         json.dump(cfg, f, indent=2, sort_keys=True)
     return actions
@@ -173,5 +191,11 @@ def generate_launch_description():
                               description='one Nav2 component container per robot'),
         DeclareLaunchArgument('clock_period', default_value='0.005',
                               description='[s sim] ROS /clock period (physics stays at 1 ms)'),
+        DeclareLaunchArgument('safety', default_value='true',
+                              description='start the per-robot safety layer (CLAUDE_CODE/03); '
+                                          'false: start parakram_safety safety.launch.py '
+                                          'yourself (no command reaches a base until then)'),
+        DeclareLaunchArgument('safety_enabled', default_value='true',
+                              description='false = ablation A1: whole safety layer bypassed'),
         OpaqueFunction(function=_setup),
     ])

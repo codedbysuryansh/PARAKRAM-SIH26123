@@ -8,3 +8,10 @@ intersection:
   robot2: [[5, 3], [5, 8]]     # E arm -> west past the junction, and back
   robot3: [[7, 6], [3, 6]]     # S arm -> N arm through the junction, and back
   robot4: [[3, 6], [7, 6]]     # (only with n_robots:=4) N arm -> S arm
+# "headon" (CLAUDE_CODE/03 safety acceptance, run with reactive_only:=true): every robot's goal
+# lies beyond the central junction on its own axis, so the robots meet head-on / crossing there.
+headon:
+  robot1: [[5, 10], [5, 2]]    # row 5, W -> E and back
+  robot2: [[5, 2], [5, 10]]    # row 5, E -> W and back
+  robot3: [[10, 6], [0, 6]]    # column 6, S -> N and back
+  robot4: [[0, 6], [10, 6]]    # (only with n_robots:=4) column 6, N -> S and back

@@ -33,7 +33,8 @@ def _setup(context):
     from parakram_bringup import run_manifest as rm
 
     cfg = {k: LaunchConfiguration(k).perform(context) for k in (
-        'n_robots', 'scenario', 'assign_duration', 'run_dir', 'roster') + NODE_PARAMS}
+        'n_robots', 'scenario', 'assign_duration', 'run_dir', 'roster', 'reactive_only')
+        + NODE_PARAMS}
     n_robots = int(cfg['n_robots'])
     run_dir = cfg['run_dir'] or os.path.realpath(os.path.join(rm.default_log_root(), 'latest'))
     os.makedirs(run_dir, exist_ok=True)
@@ -53,6 +54,7 @@ def _setup(context):
         fixed = [int(v) for cell in goals.get(ns, []) for v in cell]
         per_robot[ns] = fixed
         params = dict(node_params, robot_id=ns, fixed_goals=fixed,
+                      reactive_only=_truthy(cfg['reactive_only']),
                       fixed_assign_duration=float(cfg['assign_duration']), log_dir=run_dir,
                       grid_yaml=grid_yaml, use_sim_time=True)
         actions.append(Node(package='parakram_coord', executable='coordination_node',
@@ -84,6 +86,9 @@ def generate_launch_description():
          DeclareLaunchArgument('run_dir', default_value='',
                                description='log dir (default: bench/logs/latest)'),
          DeclareLaunchArgument('roster', default_value='true',
-                               description='start the optional /fleet/roster helper')]
+                               description='start the optional /fleet/roster helper'),
+         DeclareLaunchArgument('reactive_only', default_value='false',
+                               description='disable conflict resolution (CLAUDE_CODE/03 '
+                                           'acceptance: only the safety layer separates robots)')]
         + [DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()]
         + [OpaqueFunction(function=_setup)])

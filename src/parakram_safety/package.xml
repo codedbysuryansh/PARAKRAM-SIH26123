@@ -3,9 +3,24 @@
 <package format="3">
   <name>parakram_safety</name>
   <version>0.1.0</version>
-  <description>PARAKRAM: Reactive comms-free safety layer (Collision Monitor config + NH-ORCA/CBF filter, lidar only). Scaffold only; implemented in CLAUDE_CODE/03.</description>
+  <description>PARAKRAM: reactive comms-free safety layer (Nav2 Collision Monitor + lidar-only NH-ORCA velocity filter), the only cmd_vel gate (CLAUDE_CODE/03).</description>
   <maintainer email="suryanshsinghvns@gmail.com">Suryansh Singh</maintainer>
   <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>parakram_msgs</exec_depend>
+  <exec_depend>parakram_sim</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

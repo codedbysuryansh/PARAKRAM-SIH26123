@@ -10,9 +10,14 @@
 # Topic rules (namespacing): every robot-local topic is RELATIVE (resolves to /<ns>/...). Only the
 # shared map is absolute (/map). TF is isolated per robot (/<ns>/tf) with un-prefixed frames.
 #
-# cmd_vel chain (Nav2 default order; the reactive safety layer is the LAST gate, CLAUDE_CODE/00):
-#   controller_server --cmd_vel_nav--> velocity_smoother --cmd_vel_smoothed--> collision_monitor
-#   --cmd_vel--> base            (behavior_server also publishes on cmd_vel_nav)
+# cmd_vel chain (CLAUDE_CODE/03: controller -> collision_monitor -> velocity_smoother -> base; the
+# reactive safety layer is the only thing that gates cmd_vel):
+#   controller_server --cmd_vel_nav--> orca_filter --cmd_vel_safe--> collision_monitor
+#   --cmd_vel_monitored--> velocity_smoother --cmd_vel--> base  (behavior_server also ->
+#   cmd_vel_nav)
+# orca_filter and collision_monitor belong to parakram_safety (safety.launch.py, with
+# parakram_safety/config/collision_monitor.yaml), deliberately NOT in this template. Without the
+# safety layer nothing publishes cmd_vel_monitored, so the base gets no command: fails safe.
 #
 # Rotation limits (all layers): 0.6 rad/s, 1.6 rad/s^2. Measured in 01 on this Gazebo model: an
 # in-place turn at 1.2 rad/s leaves the body 30-40 deg behind the wheel odometry (it catches up
@@ -280,36 +285,3 @@ velocity_smoother:
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
-
-# PLACEHOLDER (CLAUDE_CODE/01): wired into the cmd_vel chain now (it is the last gate before the
-# base) so the topology is final; CLAUDE_CODE/03 replaces this with the real comms-free safety
-# configuration (+ NH-ORCA/CBF filter). In 01 it is a PASS-THROUGH (polygon disabled).
-# Lesson for 03 (measured in 01): a naive "stop" zone (0.20 m ahead, +/-0.10 m) froze robots in
-# the 0.5 m aisles -- a stop action also blocks in-place rotation and Nav2's recoveries, so once a
-# shelf entered the zone the robot could never turn away (safety-by-deadlock), and the wheels then
-# fought the shelves during recoveries, corrupting odometry. 03 must avoid that failure mode.
-collision_monitor:
-  ros__parameters:
-    base_frame_id: "base_footprint"
-    odom_frame_id: "odom"
-    cmd_vel_in_topic: "cmd_vel_smoothed"
-    cmd_vel_out_topic: "cmd_vel"
-    state_topic: "collision_monitor_state"
-    transform_tolerance: 0.2
-    source_timeout: 1.0
-    base_shift_correction: true
-    stop_pub_timeout: 2.0
-    polygons: ["PlaceholderStop"]
-    PlaceholderStop:
-      type: "polygon"
-      points: "[[0.20, 0.10], [0.20, -0.10], [0.045, -0.10], [0.045, 0.10]]"
-      action_type: "stop"
-      min_points: 3
-      visualize: true
-      polygon_pub_topic: "polygon_stop"
-      enabled: false                  # 01 placeholder: pass-through (see note above)
-    observation_sources: ["scan"]
-    scan:
-      type: "scan"
-      topic: "scan"
-      enabled: true

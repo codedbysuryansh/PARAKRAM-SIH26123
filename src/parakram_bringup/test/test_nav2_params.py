@@ -1,14 +1,19 @@
 """Tests for the shared Nav2 template and the per-robot params rendering."""
 
+import importlib.util
 import os
 
 from parakram_bringup.nav2_params import render_robot_params, write_robot_params
 import pytest
 import yaml
 
-TEMPLATE = os.path.join(os.path.dirname(__file__), '..', 'config', 'nav2_params.yaml')
+HERE = os.path.dirname(__file__)
+TEMPLATE = os.path.join(HERE, '..', 'config', 'nav2_params.yaml')
+# CLAUDE_CODE/03: the collision monitor's configuration belongs to the safety layer
+MONITOR = os.path.join(HERE, '..', '..', 'parakram_safety', 'config', 'collision_monitor.yaml')
+NAV2_LAUNCH = os.path.join(HERE, '..', 'launch', 'nav2_robot.launch.py')
 NODES = ['amcl', 'bt_navigator', 'controller_server', 'planner_server', 'behavior_server',
-         'velocity_smoother', 'collision_monitor']
+         'velocity_smoother']
 
 
 @pytest.fixture(scope='module')
@@ -44,11 +49,25 @@ def test_template_is_namespace_agnostic(template):
 
 
 def test_cmd_vel_chain(template):
+    """CLAUDE_CODE/03 chain: controller -> [filter] -> collision_monitor -> smoother -> base."""
     vs = template['velocity_smoother']['ros__parameters']
-    cm = template['collision_monitor']['ros__parameters']
-    assert cm['cmd_vel_in_topic'] == 'cmd_vel_smoothed'
-    assert cm['cmd_vel_out_topic'] == 'cmd_vel'
     assert vs['max_velocity'][0] <= 0.22  # Burger limit
+    assert 'collision_monitor' not in template     # parakram_safety brings it up (03)
+    spec = importlib.util.spec_from_file_location('nav2_robot_launch', NAV2_LAUNCH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    remaps = {name: dict(r) for _, _, _, name, r in mod.NAV2_NODES}
+    assert remaps['controller_server']['cmd_vel'] == 'cmd_vel_nav'
+    assert remaps['behavior_server']['cmd_vel'] == 'cmd_vel_nav'
+    # the smoother is the last stage: it reads the collision monitor and drives the base
+    assert remaps['velocity_smoother'] == {'cmd_vel': 'cmd_vel_monitored',
+                                           'cmd_vel_smoothed': 'cmd_vel'}
+    assert 'collision_monitor' not in remaps
+    assert 'collision_monitor' not in mod.NAVIGATION_NODES
+    with open(MONITOR) as f:
+        cm = yaml.safe_load(f)['collision_monitor']['ros__parameters']
+    topics = (cm['cmd_vel_in_topic'], cm['cmd_vel_out_topic'])
+    assert topics == ('cmd_vel_safe', 'cmd_vel_monitored')
 
 
 def test_groot_disabled(template):

@@ -33,6 +33,7 @@
   <exec_depend>nav2_planner</exec_depend>
   <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
   <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>parakram_safety</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
