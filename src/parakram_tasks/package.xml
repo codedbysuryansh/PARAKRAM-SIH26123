@@ -3,9 +3,21 @@
 <package format="3">
   <name>parakram_tasks</name>
   <version>0.1.0</version>
-  <description>PARAKRAM: Lease-gated Contract-Net task auction (opportunistic throughput accelerator) + lease manager. Scaffold only; implemented in CLAUDE_CODE/04.</description>
+  <description>PARAKRAM: lease-gated decentralized Contract-Net task allocation (opportunistic throughput accelerator; no central auctioneer), CLAUDE_CODE/04.</description>
   <maintainer email="suryanshsinghvns@gmail.com">Suryansh Singh</maintainer>
   <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>parakram_msgs</exec_depend>
+  <exec_depend>parakram_comms</exec_depend>
+  <exec_depend>parakram_sim</exec_depend>
+  <exec_depend>parakram_bringup</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

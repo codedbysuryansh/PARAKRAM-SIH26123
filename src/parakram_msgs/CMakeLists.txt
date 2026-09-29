@@ -15,6 +15,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Award.msg"
   "msg/CoordStatus.msg"
   "msg/SafetyStatus.msg"
+  "msg/Task.msg"
+  "msg/TaskProgress.msg"
+  "msg/TaskComplete.msg"
+  "msg/TaskStatus.msg"
   "srv/ReAuction.srv"
   DEPENDENCIES builtin_interfaces geometry_msgs
 )

@@ -53,10 +53,12 @@ def _setup(context):
         ns = f'robot{i}'
         fixed = [int(v) for cell in goals.get(ns, []) for v in cell]
         per_robot[ns] = fixed
-        params = dict(node_params, robot_id=ns, fixed_goals=fixed,
+        params = dict(node_params, robot_id=ns,
                       reactive_only=_truthy(cfg['reactive_only']),
                       fixed_assign_duration=float(cfg['assign_duration']), log_dir=run_dir,
                       grid_yaml=grid_yaml, use_sim_time=True)
+        if fixed:        # none for task-driven scenarios (CLAUDE_CODE/04: goals come from tasks)
+            params['fixed_goals'] = fixed
         actions.append(Node(package='parakram_coord', executable='coordination_node',
                             name='coordination', namespace=ns, output='screen',
                             parameters=[params],

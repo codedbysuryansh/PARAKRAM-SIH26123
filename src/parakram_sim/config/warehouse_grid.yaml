@@ -169,3 +169,17 @@ scenarios:
       - [[5, 2, 180]]
       - [[10, 6, 90]]
       - [[0, 6, -90]]
+  warehouse_stream:
+    description: >-
+      Streamed pickup -> dropoff tasks (CLAUDE_CODE/04 acceptance). Pickups are mid-aisle shelf
+      faces, dropoffs the four corner cells (out of the traffic lanes, where a robot that
+      finished can wait). Robots start on the central cross, away from every station. Tasks are
+      allocated by the Contract-Net auction (parakram_tasks), not fixed goals.
+    start_cells:
+      - [5, 2, 0]      # robot1: row 5, west part, facing east
+      - [5, 10, 180]   # robot2: row 5, east part, facing west
+      - [0, 6, 90]     # robot3: south end of column 6, facing north
+      - [10, 6, -90]   # robot4: north end of column 6, facing south
+    task_stations:
+      pickup: [[3, 3], [3, 9], [7, 3], [7, 9]]
+      dropoff: [[0, 0], [0, 12], [10, 0], [10, 12]]
