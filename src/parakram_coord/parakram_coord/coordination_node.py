@@ -15,6 +15,10 @@ Out: ``/<ns>/state`` + ``/<ns>/intent`` (BEST_EFFORT, every tick), ``/<ns>/coord
 state / intent / coord_status, but Nav2 gets the whole shortest path to the goal, ignoring every
 peer, so only the reactive safety layer stands between robots. Default ``false`` (02 behaviour).
 
+``loss`` (CLAUDE_CODE/05, default 0): seeded app-level loss (``parakram_comms.loss``) on the
+peer ``state`` / ``intent`` subscriptions, applied before a message is processed; counters in
+``bench/logs/<run_id>/comms_<ns>.csv``.
+
 Until CLAUDE_CODE/04 provides task allocation, ``fixed_goals`` (flattened ``[r0, c0, r1, ...]``)
 gives the robot a local, temporary cyclic assignment for ``fixed_assign_duration`` seconds.
 Per tick it logs ``bench/logs/<run_id>/coord_<ns>.csv``.
@@ -32,6 +36,7 @@ import time
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose2D, PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.action import NavigateThroughPoses
+from parakram_comms.loss import LossFilter
 from parakram_comms.qos import INTENT_QOS, STATE_QOS, STATUS_QOS
 from parakram_coord.pibt_rule import (committed_claims, CoordParams, occupied_cells,
                                       PibtCoordinator)
@@ -109,6 +114,15 @@ class CoordinationNode(Node):
         grid_yaml = dp('grid_yaml', '').value
         roster_scan = float(dp('roster_scan_period', 5.0).value)
         self.reactive_only = bool(dp('reactive_only', False).value)
+        # CLAUDE_CODE/05: seeded app-level loss on PEER state / intent, applied before processing
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        comms_log = os.path.join(log_dir, f'comms_{ns or self.robot_id}.csv') if log_dir else None
+        self.loss = LossFilter(
+            float(dp('loss', 0.0).value), int(dp('seed', 0).value), self.robot_id,
+            model=dp('loss_model', 'bernoulli').value,
+            burst_corr=float(dp('loss_burst_corr', 0.8).value), log_path=comms_log)
+        self.loss_logged_at = None
 
         self.grid = WarehouseGrid.from_yaml(grid_yaml or default_grid_path())
         self.core = PibtCoordinator(self.robot_id, self.grid, self.params)
@@ -161,7 +175,9 @@ class CoordinationNode(Node):
             f'coordination {self.robot_id}: {tick_hz:.0f} Hz, W={self.params.window}, '
             f'k={self.params.reserve_k}, lease={self.params.lease_ttl}s, '
             f'fixed goals={self.fixed_goals} for {self.fixed_duration:.0f}s'
-            + (' -- REACTIVE-ONLY: conflict resolution disabled' if self.reactive_only else ''))
+            + (' -- REACTIVE-ONLY: conflict resolution disabled' if self.reactive_only else '')
+            + (f' -- app-level loss {self.loss.loss:.0%} ({self.loss.model}, seed '
+               f'{self.loss.seed}) on peer state/intent' if self.loss.loss > 0 else ''))
 
     # ------------------------------------------------------------------ inputs
     def _now(self):
@@ -171,11 +187,13 @@ class CoordinationNode(Node):
         if peer_id in self.peer_subs:
             return
         self.intents_received[peer_id] = 0
+        on_intent = self.loss.wrap(peer_id, 'intent',
+                                   lambda m, pid=peer_id: self._on_intent(pid, m))
         self.peer_subs[peer_id] = (
-            self.create_subscription(Intent, f'/{peer_id}/intent',
-                                     lambda m, pid=peer_id: self._on_intent(pid, m), INTENT_QOS),
+            self.create_subscription(Intent, f'/{peer_id}/intent', on_intent, INTENT_QOS),
             self.create_subscription(RobotState, f'/{peer_id}/state',
-                                     lambda m: None, STATE_QOS))
+                                     self.loss.wrap(peer_id, 'state', lambda m: None),
+                                     STATE_QOS))
         via = sorted(self.roster.sources.get(peer_id, []))
         self.get_logger().info(f'peer discovered: {peer_id} (via {via})')
 
@@ -398,6 +416,9 @@ class CoordinationNode(Node):
             self.pub_reroute.publish(String(data=f'{self.robot_id}: {res.note}'))
             self.get_logger().warn(f'{self.robot_id}: {res.note}')
 
+        if self.loss_logged_at is None or now - self.loss_logged_at >= 5.0:
+            self.loss.log(now)
+            self.loss_logged_at = now
         if self.csv_file is not None:
             self.csv.writerow([f'{now:.3f}', self.robot_id, _cells_str(res.planned[:1]),
                                _cells_str([goal]) if goal is not None else '', age,
@@ -409,7 +430,8 @@ class CoordinationNode(Node):
                 self.rows_since_flush = 0
 
     def close(self):
-        """Flush the CSV log."""
+        """Flush the CSV log (and the loss counters)."""
+        self.loss.log(self._now())
         if self.csv_file is not None:
             self.csv_file.flush()
             self.csv_file.close()

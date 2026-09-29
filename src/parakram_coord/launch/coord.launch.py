@@ -8,6 +8,10 @@ Starts one identical ``coordination_node`` per robot (in its namespace) and the 
 ``/fleet/roster`` helper. Robots get the scenario's temporary fixed crossing assignments
 (config/crossing_goals.yaml) until task allocation exists (CLAUDE_CODE/04). Logs go to the
 fleet run's directory (``bench/logs/latest`` unless ``run_dir:=`` is given).
+
+``loss`` / ``seed`` (CLAUDE_CODE/05 app-level loss on peer state and intent) default to the
+running fleet's (``run_manifest.json``), so a fleet started with ``loss:=0.3`` is coordinated
+under 30 % loss without repeating it here.
 """
 
 import json
@@ -33,11 +37,23 @@ def _setup(context):
     from parakram_bringup import run_manifest as rm
 
     cfg = {k: LaunchConfiguration(k).perform(context) for k in (
-        'n_robots', 'scenario', 'assign_duration', 'run_dir', 'roster', 'reactive_only')
-        + NODE_PARAMS}
+        'n_robots', 'scenario', 'assign_duration', 'run_dir', 'roster', 'reactive_only',
+        'loss', 'seed', 'loss_model', 'loss_burst_corr') + NODE_PARAMS}
     n_robots = int(cfg['n_robots'])
     run_dir = cfg['run_dir'] or os.path.realpath(os.path.join(rm.default_log_root(), 'latest'))
     os.makedirs(run_dir, exist_ok=True)
+    fleet = {}
+    try:
+        with open(os.path.join(run_dir, 'run_manifest.json')) as f:
+            fleet = json.load(f)
+    except (OSError, ValueError):
+        pass
+    fleet_args = fleet.get('launch_args', {})
+    loss = {'loss': float(cfg['loss'] or fleet.get('loss', 0.0)),
+            'seed': int(cfg['seed'] or fleet.get('seed', 0)),
+            'loss_model': cfg['loss_model'] or fleet_args.get('loss_model') or 'bernoulli',
+            'loss_burst_corr': float(cfg['loss_burst_corr'] or
+                                     fleet_args.get('loss_burst_corr') or 0.8)}
     goals_file = os.path.join(get_package_share_directory('parakram_coord'), 'config',
                               'crossing_goals.yaml')
     with open(goals_file) as f:
@@ -53,7 +69,7 @@ def _setup(context):
         ns = f'robot{i}'
         fixed = [int(v) for cell in goals.get(ns, []) for v in cell]
         per_robot[ns] = fixed
-        params = dict(node_params, robot_id=ns,
+        params = dict(node_params, robot_id=ns, **loss,
                       reactive_only=_truthy(cfg['reactive_only']),
                       fixed_assign_duration=float(cfg['assign_duration']), log_dir=run_dir,
                       grid_yaml=grid_yaml, use_sim_time=True)
@@ -67,7 +83,7 @@ def _setup(context):
         actions.append(Node(package='parakram_coord', executable='roster_helper',
                             name='roster_helper', output='screen'))
     manifest = {'kind': 'coord', 'launch_args': cfg, 'node_params': node_params,
-                'fixed_goals': per_robot, 'goals_file': goals_file}
+                'fixed_goals': per_robot, 'goals_file': goals_file, 'app_level_loss': loss}
     with open(os.path.join(run_dir, 'coord_manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     actions.insert(0, LogInfo(msg=f'[parakram_coord] logging to {run_dir}'))
@@ -91,6 +107,13 @@ def generate_launch_description():
                                description='start the optional /fleet/roster helper'),
          DeclareLaunchArgument('reactive_only', default_value='false',
                                description='disable conflict resolution (CLAUDE_CODE/03 '
-                                           'acceptance: only the safety layer separates robots)')]
+                                           'acceptance: only the safety layer separates robots)'),
+         DeclareLaunchArgument('loss', default_value='',
+                               description="peer state/intent app-level loss (default: fleet's)"),
+         DeclareLaunchArgument('seed', default_value='', description="default: the fleet's"),
+         DeclareLaunchArgument('loss_model', default_value='',
+                               description="bernoulli | gilbert_elliott (default: fleet's)"),
+         DeclareLaunchArgument('loss_burst_corr', default_value='',
+                               description='Gilbert-Elliott burst correlation (default 0.8)')]
         + [DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()]
         + [OpaqueFunction(function=_setup)])

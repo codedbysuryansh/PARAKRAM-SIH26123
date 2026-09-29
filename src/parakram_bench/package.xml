@@ -3,9 +3,17 @@
 <package format="3">
   <name>parakram_bench</name>
   <version>0.1.0</version>
-  <description>PARAKRAM: Benchmark harness, scenario runner, loss injector, loggers, ground-truth checker. Scaffold only; implemented in CLAUDE_CODE/07.</description>
+  <description>PARAKRAM: Benchmark harness, scenario runner, loss injector, loggers, ground-truth checker. CLAUDE_CODE/05: Benchmark #2 loss sweep and netem check; the rest in CLAUDE_CODE/07.</description>
   <maintainer email="suryanshsinghvns@gmail.com">Suryansh Singh</maintainer>
   <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>parakram_msgs</exec_depend>
+  <exec_depend>parakram_comms</exec_depend>
+  <exec_depend>parakram_bringup</exec_depend>
+  <exec_depend>parakram_coord</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  <exec_depend>iproute2</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

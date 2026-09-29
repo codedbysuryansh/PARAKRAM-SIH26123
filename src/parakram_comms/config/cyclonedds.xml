@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  CLAUDE_CODE/05 fallback fabric: CycloneDDS with a STATIC UNICAST peer list (no multicast, no
+  discovery server: every robot talks to the listed peers directly; genuinely serverless).
+
+    export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    export CYCLONEDDS_URI=file://$(ros2 pkg prefix parakram_comms)/share/parakram_comms/config/cyclonedds.xml
+    export PARAKRAM_PEER1=192.168.1.11 PARAKRAM_PEER2=192.168.1.12 PARAKRAM_PEER3=192.168.1.13
+
+  The peers default to 127.0.0.1 (single-host simulation). List every robot, the local one
+  included; CycloneDDS expands ${VAR:-default} in this file.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" multicast="default" />
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <!-- unicast discovery probes ports of participant indices 0..MaxAutoParticipantIndex on
+           every peer: one index per ROS process on that host (a simulated fleet runs dozens) -->
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>120</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="${PARAKRAM_PEER1:-127.0.0.1}" />
+        <Peer address="${PARAKRAM_PEER2:-127.0.0.1}" />
+        <Peer address="${PARAKRAM_PEER3:-127.0.0.1}" />
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

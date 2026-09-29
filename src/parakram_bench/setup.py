@@ -10,6 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/scripts', ['scripts/netem.sh', 'scripts/netem_verify.sh']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +25,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'run_loss_sweep = parakram_bench.run_loss_sweep:main',
+            'netem_check = parakram_bench.netem_check:main',
         ],
     },
 )

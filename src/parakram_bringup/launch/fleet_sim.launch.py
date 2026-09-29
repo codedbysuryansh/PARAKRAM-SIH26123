@@ -14,9 +14,12 @@ them out (start that launch file separately: the work order's two-step acceptanc
 runs no command reaches a base. ``safety_enabled:=false`` is the A1 ablation (the whole safety
 layer bypassed).
 
-Launch args (CLAUDE_CODE/00): ``seed``, ``loss``, ``n_robots``, ``scenario``. Packet-loss
-injection does not exist until CLAUDE_CODE/05, so any ``loss`` other than 0 is REFUSED rather
-than silently ignored (a run must never be labelled with a loss level it did not have).
+Launch args (CLAUDE_CODE/00): ``seed``, ``loss``, ``n_robots``, ``scenario``. ``loss`` in
+[0, 1) (CLAUDE_CODE/05) is recorded in the run manifest with ``loss_model`` and
+``loss_burst_corr``; it is APPLIED by the coordination layer (``coord.launch.py`` reads it from
+the manifest): seeded app-level drop of peer state/intent, counted per stream in
+``comms_<ns>.csv``, so a run is never labelled with a loss it did not have. Nothing else
+(sensors, the safety layer, task/award traffic) is subject to it.
 """
 
 import json
@@ -44,14 +47,15 @@ def _setup(context):
     cfg = {k: LaunchConfiguration(k).perform(context) for k in (
         'n_robots', 'scenario', 'seed', 'loss', 'gui', 'render_engine', 'software_gl',
         'lidar_noise_std', 'lidar_rate', 'log_level', 'run_id', 'nav2_start_delay',
-        'nav2_stagger', 'use_composition', 'clock_period', 'safety', 'safety_enabled')}
+        'nav2_stagger', 'use_composition', 'clock_period', 'safety', 'safety_enabled',
+        'loss_model', 'loss_burst_corr')}
     n_robots = int(cfg['n_robots'])
     seed = int(cfg['seed'])
     loss = float(cfg['loss'])
-    if loss != 0.0:
-        raise RuntimeError(
-            f'loss:={loss} requested, but packet-loss injection is implemented in '
-            'CLAUDE_CODE/05 (not yet built). Refusing to start a run that would be mislabelled.')
+    if not 0.0 <= loss < 1.0:
+        raise RuntimeError(f'loss:={loss} must be in [0, 1) (CLAUDE_CODE/05 sweep: 0.0-0.6)')
+    if cfg['loss_model'] not in ('bernoulli', 'gilbert_elliott'):
+        raise RuntimeError(f"loss_model:={cfg['loss_model']} must be bernoulli or gilbert_elliott")
 
     sim_share = get_package_share_directory('parakram_sim')
     bringup_share = get_package_share_directory('parakram_bringup')
@@ -169,7 +173,12 @@ def generate_launch_description():
                               description='scenario in parakram_sim/config/warehouse_grid.yaml'),
         DeclareLaunchArgument('seed', default_value='1', description='integer run seed'),
         DeclareLaunchArgument('loss', default_value='0.0',
-                              description='packet loss (must be 0 until CLAUDE_CODE/05)'),
+                              description='app-level loss on peer state/intent, 0.0-0.6 '
+                                          '(applied by the coordination layer)'),
+        DeclareLaunchArgument('loss_model', default_value='bernoulli',
+                              description='bernoulli | gilbert_elliott (bursty)'),
+        DeclareLaunchArgument('loss_burst_corr', default_value='0.8',
+                              description='Gilbert-Elliott burst correlation rho'),
         DeclareLaunchArgument('gui', default_value='false', description='start the gz GUI'),
         DeclareLaunchArgument('render_engine', default_value='ogre',
                               description='gz server render engine (ogre on the VM; ogre2 on '
