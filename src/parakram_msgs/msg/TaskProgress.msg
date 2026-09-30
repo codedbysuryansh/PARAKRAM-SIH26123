@@ -5,6 +5,8 @@ string   robot_id
 uint32   seq                # the award round being renewed
 builtin_interfaces/Time lease_expiry   # the renewed lease
 uint8    stage
+string   announcer_id       # CLAUDE_CODE/06: announcer of the award held (same-round tie-break;
+                            # set on the holder's local current_task, "" where unused)
 uint8    STAGE_TO_PICKUP=0
 uint8    STAGE_TO_DROPOFF=1
 uint8    STAGE_RELEASED=2

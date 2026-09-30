@@ -1,0 +1,4 @@
+mode,loss_pct,seed,run_id,status,attempt,wall_s,kind,victim,victim_task,trigger,n_contacts,min_rr_distance_m,restored,restoration_s,entered_s,lease_expire_s,lease_expire_all_s,space_reclaimed_s,detect_s,task_reassigned_s,duplicates,concurrent_holding,concurrent_execution,completions,tasks_completed_post,throughput_post,freezes,victim_moved_m,victim_task_completed_by,error
+parakram,0,1,0e5bc66e-d174-497c-a36d-6b4583a4a47f,ok,1,151.9,s4,robot2,task_003,,0,0.08565374377287935,,,,,,,,,0,0,0,3,3,2.0,5,0.0,,
+parakram,0,2,7f9d27f5-2cba-44e5-bdf9-41eebc1110a8,ok,1,151.9,s4,robot1,task_001,,0,0.16323777103174406,,,,,,,,,0,0,0,1,1,0.6666666666666666,5,0.0,,
+parakram,0,3,dee53b11-cef4-4d61-bd72-68d85de3593f,ok,1,151.9,s4,robot1,task_001,,0,0.47277216499516284,,,,,,,,,0,0,0,2,1,0.6666666666666666,5,0.0,,

@@ -37,6 +37,39 @@ ros2 launch parakram_tasks tasks.launch.py n_robots:=3 task_rate:=0.2
 completions and checks the six PASS items with Gazebo ground truth. Runs (acceptance
 verification, not benchmark results): `288d8a91` and `8f4e5ca1` in `bench/logs`, both PASS.
 
+## CLAUDE_CODE/06 additions (`recovery_mode`, from the fleet manifest)
+
+- `lease` (PARAKRAM, default) with `award_gate` (tasks.launch.py turns it on in this mode; the
+  node default keeps the 04 behaviour): **quorum award leases**, at most one robot per task.
+  - The holder's lease-renewal intents (coordination, 10 Hz) also renew its award at every peer
+    (`on_holder_renewal`); coordination reports on `coord_status` since when a strict majority
+    of the fleet (the holder included) acknowledged renewals carrying it.
+  - The holder works on the task only while that is within `award_lease_ttl - award_margin`
+    (10 - 2 s); otherwise it releases it (RELEASED).
+  - A robot counts award leases down, and announces, bids, awards or serves `ReAuction`, only
+    while its own spatial lease is valid (it hears a majority and is acknowledged); while it is
+    cut off its lease clock stops (`shift_leases`).
+  - Another robot's acknowledgement of a NEW renewal of a holder renews that holder's awards
+    (`extend_holder`): partitioned from this robot is not dead.
+  - `ReAuction` (the watchdog's DEAD) announces at once the dead robot's tasks whose award lease
+    has run out here, never earlier (the holder may be alive behind a partition).
+  - Two awards of one round (two announcers that missed each other under loss): the lower
+    announcer wins, as for Award messages, and the announcer also rides on the holder's
+    renewal intents (`Intent.task_announcer`, from `TaskProgress.announcer_id` on the local
+    `current_task`) and on the digests, so the loser drops within one delivery even if the
+    winning Award was lost; a new award waits `award_settle` (1 s) before it is worked on.
+  - `/fleet/task_digest` (1 Hz): completions and award rounds with their announcers, so a
+    robot that missed messages converges (completions are final, newer rounds win, an entry
+    without announcer never wins a same-round tie).
+- `release` (`reauction_baseline`): awards never expire and there is no gate; a task moves only
+  through a newer round (`ReAuction` on the watchdog's DEAD, 1 s: every survivor announces its
+  own round, also of a task another survivor already re-opened, as in 06's "two peers both
+  re-auction"), and a newer round of a task a silent peer held, seen from ANOTHER robot,
+  releases that peer's space here (`release_peer`).
+- `loss_scope:=fleet`: every inter-robot subscription goes through the robot's per-link loss
+  process (`parakram_comms.link_loss`; counters `comms_<ns>_tasks.csv`).
+- Tests: `test_task_pool_w06.py`, `test_node_award_gate.py` (the node's quorum rules).
+
 ## Known limitations and observations
 
 - One task per robot at a time; busy robots do not bid (the cost supports a `load` term).
@@ -44,9 +77,9 @@ verification, not benchmark results): `288d8a91` and `8f4e5ca1` in `bench/logs`,
   acceptance runs logged ~720-760 announcements for 21 awards.
 - No fairness: an idle robot bids on its cheapest open round, so a task can wait long
   (`task_012` in `288d8a91`: ~410 s from its killed round to its award, ~480 s to completion).
-- Heartbeats (`/<peer>/heartbeat`, CLAUDE_CODE/06) are only read to skip bidders known to be
-  stale at award time; until 06 nothing publishes them, and the lease is what frees a dead
-  holder's task. Stuck holders stop renewing after `stall_timeout` (60 s); coordination's
+- Heartbeats (`/<peer>/heartbeat`, relayed from the lease renewals by CLAUDE_CODE/06) are only
+  read to skip bidders known to be stale at award time; the lease is what frees a dead holder's
+  task. Stuck holders stop renewing after `stall_timeout` (60 s); coordination's
   `reroute_request` is not consumed.
 - Battery: below `battery_min` a robot withholds its bids; charging is not implemented.
 - Leases use sim time (one `/clock`); clock skew on hardware is CLAUDE_CODE/06's concern.

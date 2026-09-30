@@ -28,6 +28,33 @@ went stale. The lease stays the mechanism that frees a dead holder's task.
 The auction is an opportunistic throughput accelerator: coordination (PIBT + spatial leases)
 and the reactive safety layer never depend on it. Events: ``bench/logs/<run_id>/tasks.csv``
 (shared, append-only), status: ``/fleet/task_status``.
+
+CLAUDE_CODE/06 (``recovery_mode:=lease``, the default): the award lease is renewed by the
+holder's lease-renewal intents too (it publishes its current award on ``/<ns>/current_task``;
+coordination carries it and reports on ``coord_status`` since when a strict majority of the
+fleet acknowledged renewals of it). At most one robot works on a task (quorum leases):
+
+* the holder executes only while a strict majority (itself included) acknowledged a renewal
+  within ``award_lease_ttl - award_margin``; otherwise it releases the task (RELEASED);
+* a robot counts award leases down, and announces, bids, awards or re-auctions, only while its
+  OWN spatial lease is valid (it hears a majority and is acknowledged): a robot cut off from the
+  fleet neither frees nor takes tasks, and its lease clock restarts where it stopped;
+* another robot's acknowledgement of a NEW renewal of a holder (every intent carries them)
+  renews that holder's awards here: partitioned from this robot is not dead.
+
+A robot that could re-auction a task hears a majority, which shares a robot with the holder's
+acknowledging majority: it has heard of the award at most ``award_lease_ttl - award_margin``
+ago, so its lease outlives the holder's (margin ``award_margin``). A ``/fleet/task_digest``
+repeats completions and award rounds so a robot that missed messages (loss, partition)
+converges without executing a task twice. The watchdog's ``ReAuction`` only makes a robot
+announce, at once, the dead robot's tasks whose award lease has run out here.
+
+``recovery_mode:=release`` is the ``reauction_baseline``: awards have no lease; a task moves
+only through a newer round (``ReAuction`` from the watchdog), and when a newer round of a task
+a peer held reaches this robot (its re-announcement or its award: the fleet declaring the peer
+dead), that peer's space is released here (``/<ns>/release_peer``).
+``loss_scope:=fleet``: every inter-robot subscription goes through the robot's per-link loss
+process (``parakram_comms.link_loss``); the external task source is not a robot link.
 """
 
 import math
@@ -37,10 +64,11 @@ import zlib
 
 from builtin_interfaces.msg import Time as TimeMsg
 from geometry_msgs.msg import Pose2D
-from parakram_comms.qos import (HEARTBEAT_QOS, STATE_QOS, STATUS_QOS, TASK_EVENT_QOS,
-                                TASK_POOL_QOS)
-from parakram_msgs.msg import (Award, Bid, CoordStatus, Heartbeat, RobotState, Task,
-                               TaskAnnounce, TaskComplete, TaskProgress, TaskStatus)
+from parakram_comms.link_loss import attach_fault_injection, LinkLoss
+from parakram_comms.qos import (HEARTBEAT_QOS, INTENT_QOS, STATE_QOS, STATUS_QOS,
+                                TASK_EVENT_QOS, TASK_POOL_QOS)
+from parakram_msgs.msg import (Award, Bid, CoordStatus, Heartbeat, Intent, RobotState, Task,
+                               TaskAnnounce, TaskComplete, TaskDigest, TaskProgress, TaskStatus)
 from parakram_msgs.srv import ReAuction
 from parakram_sim.grid_utils import default_grid_path, WarehouseGrid
 from parakram_tasks import bidder
@@ -48,6 +76,7 @@ from parakram_tasks import task_pool as tp
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from std_msgs.msg import String
 
 LOG_COLUMNS = ['t', 'event', 'task_id', 'robot_id', 'cost', 'lease_expiry', 'seq', 'detail']
 TO_PICKUP, TO_DROPOFF, RELEASED = (TaskProgress.STAGE_TO_PICKUP, TaskProgress.STAGE_TO_DROPOFF,
@@ -105,15 +134,17 @@ class TaskLog:
 class Job:
     """The task this robot is executing."""
 
-    def __init__(self, task_id, seq, cost, lease_expiry, now):
+    def __init__(self, task_id, seq, cost, lease_expiry, now, announcer=''):
         """Start at the pickup stage."""
         self.task_id, self.seq, self.cost, self.lease_expiry = task_id, seq, cost, lease_expiry
+        self.announcer = announcer
         self.stage = TO_PICKUP
         self.goal_sent_at = None
         self.arrived_at = None
         self.best_dist = math.inf
         self.progress_t = now
         self.last_renew = now
+        self.started = now
 
 
 class AuctionNode(Node):
@@ -136,6 +167,22 @@ class AuctionNode(Node):
         self.stall_timeout = float(dp('stall_timeout', 60.0).value)
         self.goal_resend = float(dp('goal_resend', 1.5).value)
         self.hb_timeout = float(dp('heartbeat_timeout', 3.0).value)
+        self.mode = dp('recovery_mode', 'lease').value
+        if self.mode not in ('lease', 'release'):
+            raise ValueError(f'recovery_mode must be lease or release, got {self.mode}')
+        self.award_margin = float(dp('award_margin', 2.0).value)
+        # 06: a new award waits this long before it is worked on, so that a second award of the
+        # same round (two announcers that missed each other) surfaces and the tie is settled
+        self.award_settle = float(dp('award_settle', 1.0).value)
+        # the at-most-once gate needs a coordination layer that renews the award on its lease
+        # intents (06); tasks.launch.py turns it on with the lease protocol, the node default
+        # keeps the 04 behaviour (e.g. under the 04 integration test's stand-in coordination)
+        self.award_gate = bool(dp('award_gate', False).value) and self.mode == 'lease'
+        digest_period = float(dp('digest_period', 1.0).value)
+        loss_scope = dp('loss_scope', 'none').value
+        loss = float(dp('loss', 0.0).value)
+        loss_model = dp('loss_model', 'bernoulli').value
+        loss_corr = float(dp('loss_burst_corr', 0.8).value)
         self.cparams = bidder.CostParams(
             speed=float(dp('plan_speed', 0.15).value),
             service_time=2.0 * self.service_time,
@@ -147,7 +194,19 @@ class AuctionNode(Node):
         tick_hz = float(dp('tick_hz', 10.0).value)
 
         self.grid = WarehouseGrid.from_yaml(grid_yaml or default_grid_path())
-        self.pool = tp.TaskPool(self.bid_window, self.award_timeout)
+        self.pool = tp.TaskPool(self.bid_window, self.award_timeout,
+                                lease_enabled=self.mode == 'lease')
+        self.coord = None
+        self.released = set()                 # baseline: peers whose space was released
+        self.link_loss = None
+        if loss_scope == 'fleet':
+            self.link_loss = LinkLoss(loss, seed, self.me, model=loss_model,
+                                      burst_corr=loss_corr, log_path=os.path.join(
+                                          log_dir, f'comms_{self.me}_tasks.csv')
+                                      if log_dir else None)
+            attach_fault_injection(self, self.link_loss)
+        elif loss_scope != 'none':
+            raise ValueError(f'loss_scope must be none or fleet, got {loss_scope}')
         # seeded, but different on every robot: the jittered announce delays decide who announces
         self.rng = random.Random(seed * 1000003 + zlib.crc32(self.me.encode()))
         self.announce_at = {}                 # task_id -> time this robot will announce it
@@ -157,6 +216,8 @@ class AuctionNode(Node):
         self.job = None
         self.cell, self.coord_goal, self.battery = None, -1, 1.0
         self.hb_seen = {}
+        self.paused_since = None              # 06: own lease invalid since (lease clock stopped)
+        self.heard_seq = {}                   # 06: robot -> newest renewal seq known here
         self.log = TaskLog(os.path.join(log_dir, 'tasks.csv')) if log_dir else None
 
         self.pub_announce = self.create_publisher(TaskAnnounce, '/fleet/task_announce',
@@ -169,23 +230,40 @@ class AuctionNode(Node):
                                                   TASK_POOL_QOS)
         self.pub_status = self.create_publisher(TaskStatus, '/fleet/task_status', STATUS_QOS)
         self.pub_goal = self.create_publisher(Pose2D, 'assigned_task', STATUS_QOS)
+        self.pub_digest = self.create_publisher(TaskDigest, '/fleet/task_digest', TASK_EVENT_QOS)
+        self.pub_current = self.create_publisher(TaskProgress, 'current_task', STATUS_QOS)
+        self.pub_release = self.create_publisher(String, 'release_peer', 10)
+        fleet = self._fleet_wrap
         self.create_subscription(Task, '/fleet/tasks', self._on_task, TASK_POOL_QOS)
-        self.create_subscription(TaskAnnounce, '/fleet/task_announce', self._on_announce,
+        self.create_subscription(TaskAnnounce, '/fleet/task_announce',
+                                 fleet('announcer_id', 'task_announce', self._on_announce),
                                  TASK_POOL_QOS)
-        self.create_subscription(Bid, '/fleet/bid', self._on_bid, TASK_EVENT_QOS)
-        self.create_subscription(Award, '/fleet/award', self._on_award, TASK_POOL_QOS)
-        self.create_subscription(TaskProgress, '/fleet/task_progress', self._on_progress,
+        self.create_subscription(Bid, '/fleet/bid', fleet('robot_id', 'bid', self._on_bid),
                                  TASK_EVENT_QOS)
-        self.create_subscription(TaskComplete, '/fleet/task_complete', self._on_complete,
+        self.create_subscription(Award, '/fleet/award',
+                                 fleet('announcer_id', 'award', self._on_award), TASK_POOL_QOS)
+        self.create_subscription(TaskProgress, '/fleet/task_progress',
+                                 fleet('robot_id', 'task_progress', self._on_progress),
+                                 TASK_EVENT_QOS)
+        self.create_subscription(TaskComplete, '/fleet/task_complete',
+                                 fleet('robot_id', 'task_complete', self._on_complete),
                                  TASK_POOL_QOS)
+        self.create_subscription(TaskDigest, '/fleet/task_digest',
+                                 fleet('robot_id', 'task_digest', self._on_digest),
+                                 TASK_EVENT_QOS)
         self.create_subscription(CoordStatus, 'coord_status', self._on_coord, STATUS_QOS)
         self.create_subscription(RobotState, 'state', self._on_state, STATE_QOS)
         for peer in peers:
-            self.create_subscription(Heartbeat, f'/{peer}/heartbeat',
-                                     lambda m, p=peer: self._on_heartbeat(p), HEARTBEAT_QOS)
+            self.create_subscription(Heartbeat, f'/{peer}/heartbeat', self._peer_wrap(
+                peer, 'heartbeat', lambda m, p=peer: self._on_heartbeat(p)), HEARTBEAT_QOS)
+            if self.mode == 'lease':
+                self.create_subscription(Intent, f'/{peer}/intent', self._peer_wrap(
+                    peer, 'intent', lambda m, p=peer: self._on_peer_intent(p, m)),
+                    INTENT_QOS)
         self.create_service(ReAuction, 'reauction', self._on_reauction)
         self.create_timer(1.0 / tick_hz, self._tick)
         self.create_timer(1.0, self._publish_status)
+        self.create_timer(digest_period, self._publish_digest)
         self.get_logger().info(
             f'auction {self.me}: bid window {self.bid_window}s, award lease '
             f'{self.lease_ttl}s (renew every {self.renew_period}s), peers {peers}; '
@@ -207,6 +285,50 @@ class AuctionNode(Node):
         delay = self.rng.uniform(*self.jitter) * (2 ** min(rec.failed_rounds, 4))
         self.announce_at[task_id] = now + min(delay, self.backoff_max)
 
+    def _fleet_wrap(self, field, topic, callback):
+        if self.link_loss is None:
+            return callback
+        return self.link_loss.wrap_by_field(field, topic, callback, self._now)
+
+    def _peer_wrap(self, peer, topic, callback):
+        if self.link_loss is None:
+            return callback
+        return self.link_loss.wrap(peer, topic, callback, self._now)
+
+    def _connected(self, now):
+        """CLAUDE_CODE/06: my own spatial lease is valid (a majority hears and acknowledges me)."""
+        c = self.coord
+        return c is not None and bool(c.lease_valid) and now - _sec(c.stamp) < 1.0
+
+    def _auction_ok(self, now):
+        """
+        Return whether this robot may take part in auctions and count award leases down now.
+
+        With the award gate (06), only while its own lease is valid: a robot cut off from the
+        fleet cannot tell a silent holder from its own isolation, so its award-lease clock stops
+        (leases pushed back by the time it was cut off) and it neither frees nor takes tasks.
+        """
+        if not self.award_gate:
+            return True
+        if self._connected(now):
+            if self.paused_since is not None:
+                self.pool.shift_leases(now - self.paused_since)
+                self.paused_since = None
+                for task_id in list(self.announce_at):
+                    self._schedule(task_id, now)      # listen to the fleet before announcing
+            return True
+        if self.paused_since is None:
+            self.paused_since = now
+            self.my_rounds.clear()                    # awards nothing while cut off
+        return False
+
+    def _heard(self, robot, seq):
+        """Record renewal ``seq`` of ``robot``; True if it is newer than any known here."""
+        if int(seq) <= self.heard_seq.get(robot, -1):
+            return False
+        self.heard_seq[robot] = int(seq)
+        return True
+
     def _known_stale(self, robot, now):
         seen = self.hb_seen.get(robot)
         return seen is not None and now - seen > self.hb_timeout
@@ -221,6 +343,12 @@ class AuctionNode(Node):
 
     def _on_announce(self, msg):
         now = self._now()
+        rec = self.pool.tasks.get(msg.task_id)
+        if self.mode == 'release' and rec is not None and msg.announcer_id != self.me and \
+                msg.seq > rec.award_seq and rec.winner not in (self.me, msg.announcer_id, ''):
+            # baseline: ANOTHER robot re-auctions a task this peer held (in any local state:
+            # this robot may have re-announced it itself); its own announcement never counts
+            self._release(rec.winner, msg.task_id)
         if msg.task_id not in self.pool.tasks:     # discovered through its announcement
             self.pool.add(msg.task_id, (msg.pickup.x, msg.pickup.y, msg.pickup.theta),
                           (msg.dropoff.x, msg.dropoff.y, msg.dropoff.theta), now)
@@ -235,17 +363,22 @@ class AuctionNode(Node):
 
     def _on_award(self, msg):
         now = self._now()
+        rec = self.pool.tasks.get(msg.task_id)
+        previous = rec.winner if rec is not None else ''
         accepted, dropped = self.pool.on_award(msg.task_id, msg.seq, msg.winner_id,
                                                _sec(msg.lease_expiry), msg.announcer_id,
                                                msg.cost, now)
         if not accepted:
             return
+        if self.mode == 'release' and previous and previous not in (self.me, msg.winner_id):
+            self._release(previous, msg.task_id)    # baseline: the re-auction freed its space
         self.announce_at.pop(msg.task_id, None)
         if dropped == self.me and self.job is not None and self.job.task_id == msg.task_id:
             self._drop(now, f'superseded by the round-{msg.seq} award to {msg.winner_id}')
         if msg.winner_id == self.me:
             if self.job is None:
-                self.job = Job(msg.task_id, msg.seq, msg.cost, _sec(msg.lease_expiry), now)
+                self.job = Job(msg.task_id, msg.seq, msg.cost, _sec(msg.lease_expiry), now,
+                               msg.announcer_id)
                 self.get_logger().info(f'won {msg.task_id} (round {msg.seq}, cost '
                                        f'{msg.cost:.1f}s, announcer {msg.announcer_id})')
             elif self.job.task_id != msg.task_id:  # cannot happen with one outstanding bid
@@ -255,6 +388,55 @@ class AuctionNode(Node):
         self.pool.on_renew(msg.task_id, msg.seq, msg.robot_id, _sec(msg.lease_expiry),
                            released=msg.stage == RELEASED)
 
+    def _on_peer_intent(self, peer, msg):
+        """CLAUDE_CODE/06: a holder's lease-renewal intent also renews its award."""
+        if self.award_gate:
+            self._heard(peer, msg.seq)
+            for who, seq in zip(msg.ack_ids, msg.ack_seqs):
+                if who not in (self.me, peer) and self._heard(who, seq):
+                    # ``peer`` processed a renewal of ``who`` newer than any known here: ``who``
+                    # is alive and heard by the fleet, its awards stay its own
+                    self.pool.extend_holder(who, self._now() + self.lease_ttl)
+        if not msg.task_id:
+            return
+        lease = _sec(msg.stamp) + self.lease_ttl
+        applied, dropped = self.pool.on_holder_renewal(msg.task_id, msg.task_seq, peer, lease,
+                                                       msg.task_announcer)
+        if applied:
+            self.announce_at.pop(msg.task_id, None)
+            if dropped == self.me and self.job is not None and self.job.task_id == msg.task_id:
+                self._drop(self._now(), f'{peer} holds round {msg.task_seq}')
+
+    def _on_digest(self, msg):
+        if msg.robot_id == self.me:
+            return
+        now = self._now()
+        done = list(zip(msg.done_task_ids, msg.done_by))
+        # 06 (award gate): the entries' announcers settle same-round ties; otherwise '~'
+        announcers = list(msg.award_announcers) if self.award_gate else []
+        announcers += [''] * (len(msg.award_task_ids) - len(announcers))
+        awards = [(t, w, int(q), _sec(lease), a) for t, w, q, lease, a in zip(
+            msg.award_task_ids, msg.award_winners, msg.award_seqs, msg.award_lease_expiry,
+            announcers)]
+        completed, superseded = self.pool.apply_digest(done, awards, now)
+        for task_id in completed:
+            self.announce_at.pop(task_id, None)
+            if self.job is not None and self.job.task_id == task_id:
+                self._drop(now, f'completed (digest of {msg.robot_id})')
+        for task_id, dropped in superseded:
+            if dropped == self.me and self.job is not None and self.job.task_id == task_id:
+                self._drop(now, f'superseded (digest of {msg.robot_id})')
+            elif self.mode == 'release' and dropped != self.me:
+                self._release(dropped, task_id)
+
+    def _release(self, peer, task_id):
+        if peer in self.released:
+            return
+        self.released.add(peer)
+        self.pub_release.publish(String(data=peer))
+        self._event(self._now(), 'release', task_id, peer,
+                    detail='baseline: re-auction message from another robot')
+
     def _on_complete(self, msg):
         self.pool.on_complete(msg.task_id, msg.robot_id)
         self.announce_at.pop(msg.task_id, None)
@@ -263,6 +445,7 @@ class AuctionNode(Node):
             self._drop(self._now(), f'completed by {msg.robot_id}')
 
     def _on_coord(self, msg):
+        self.coord = msg
         if msg.cell >= 0:
             self.cell = self.grid.index_to_cell(msg.cell)
         self.coord_goal = msg.goal_cell
@@ -272,14 +455,31 @@ class AuctionNode(Node):
 
     def _on_heartbeat(self, peer):
         self.hb_seen[peer] = self._now()
+        self.released.discard(peer)           # alive again: a later death counts again
 
     def _on_reauction(self, request, response):
         """Fault layer (CLAUDE_CODE/06): re-announce every task a dead robot holds, now."""
         now = self._now()
         dead = request.dead_robot_id
-        ids = self.pool.release_robot(dead)
-        if self.job is not None and self.job.task_id in ids:
-            self.job = None
+        if self.award_gate:
+            # 06 lease mode: the award lease decides WHEN a task is free (its holder, possibly
+            # alive behind a partition, has released it by then); DEAD only makes this robot
+            # announce the freed tasks now rather than after its jittered delay
+            ids = []
+            if self._auction_ok(now):
+                for task_id, _reason in self.pool.expire(now):
+                    self._schedule(task_id, now)
+                ids = [r.task_id for r in self.pool.pending() if r.winner == dead]
+        else:
+            ids = self.pool.release_robot(dead)
+            if self.mode == 'release':
+                # baseline: two peers both re-auction (idempotent by task seq): a task of the
+                # dead robot another robot has already re-opened is re-announced here too, so
+                # every survivor sends its own newer round (space is freed on ANOTHER robot's)
+                ids += [r.task_id for r in self.pool.tasks.values() if r.winner == dead and
+                        r.state in (tp.PENDING, tp.AUCTION) and r.task_id not in ids]
+            if self.job is not None and self.job.task_id in ids:
+                self.job = None
         for task_id in ids:
             self._announce(task_id, now)
         response.tasks_reannounced = len(ids)
@@ -342,6 +542,8 @@ class AuctionNode(Node):
             self.my_bid = None
         if self.job is not None or self.cell is None:
             return
+        if self.award_gate and not self._connected(now):
+            return                               # 06: cut off from the fleet, no new tasks
         me = bidder.RobotSnapshot(self.me, self.cell, self.battery)
         best = None
         for rec in self.pool.tasks.values():
@@ -386,6 +588,19 @@ class AuctionNode(Node):
             x, y = self.grid.cell_to_world(*self.cell)
             self.pub_goal.publish(Pose2D(x=float(x), y=float(y), theta=0.0))
 
+    def _award_gate(self, now):
+        """CLAUDE_CODE/06: 'ok' to work on the award, 'wait' for acks, or 'drop' it."""
+        job, c = self.job, self.coord
+        limit = self.lease_ttl - self.award_margin
+        acked = 0.0
+        if c is not None and c.task_id == job.task_id and c.task_seq == job.seq:
+            acked = _sec(c.task_renewal_acked)
+        if acked <= 0.0:
+            return 'wait' if now - job.started < limit else 'drop'
+        if now > acked + limit:
+            return 'drop'
+        return 'wait' if now - job.started < self.award_settle else 'ok'
+
     def _execute(self, now):
         job = self.job
         rec = self.pool.tasks.get(job.task_id)
@@ -393,6 +608,16 @@ class AuctionNode(Node):
                 rec.award_seq != job.seq:
             self._drop(now, "no longer this robot's award")
             return
+        if self.award_gate:
+            gate = self._award_gate(now)
+            if gate == 'drop':
+                self._renew(job.task_id, job.seq, now, RELEASED)
+                self._event(now, 'release', job.task_id, self.me, seq=job.seq,
+                            detail='award renewals not acknowledged by a majority')
+                self._drop(now, 'award renewals not acknowledged by a majority: released')
+                return
+            if gate == 'wait':
+                return
         pose = rec.pickup if job.stage == TO_PICKUP else rec.dropoff
         target = self._cell_of(pose)
         index = self.grid.cell_to_index(*target)
@@ -442,17 +667,40 @@ class AuctionNode(Node):
         now = self._now()
         if now <= 0.0:
             return                                # no (sim) clock yet
-        for task_id, _reason in self.pool.expire(now):
-            self._schedule(task_id, now)
-        self._close_rounds(now)
-        for rec in self.pool.pending():
-            if rec.task_id not in self.announce_at:
-                self._schedule(rec.task_id, now)
-            elif now >= self.announce_at[rec.task_id]:
-                self._announce(rec.task_id, now)
-        self._try_bid(now)
+        if self._auction_ok(now):
+            for task_id, _reason in self.pool.expire(now):
+                self._schedule(task_id, now)
+            self._close_rounds(now)
+            for rec in self.pool.pending():
+                if rec.task_id not in self.announce_at:
+                    self._schedule(rec.task_id, now)
+                elif now >= self.announce_at[rec.task_id]:
+                    self._announce(rec.task_id, now)
+            self._try_bid(now)
         if self.job is not None:
             self._execute(now)
+        cur = TaskProgress()
+        cur.robot_id = self.me
+        if self.job is not None:
+            cur.task_id, cur.seq, cur.stage = self.job.task_id, self.job.seq, self.job.stage
+            cur.announcer_id = self.job.announcer
+        self.pub_current.publish(cur)
+
+    def _publish_digest(self):
+        now = self._now()
+        if now <= 0.0:
+            return
+        done, awards = self.pool.digest()
+        msg = TaskDigest()
+        msg.robot_id, msg.stamp = self.me, _stamp(now)
+        msg.done_task_ids = [t for t, _ in done]
+        msg.done_by = [b for _, b in done]
+        msg.award_task_ids = [a[0] for a in awards]
+        msg.award_winners = [a[1] for a in awards]
+        msg.award_seqs = [int(a[2]) for a in awards]
+        msg.award_announcers = [a[4] for a in awards]
+        msg.award_lease_expiry = [_stamp(a[3] if math.isfinite(a[3]) else now) for a in awards]
+        self.pub_digest.publish(msg)
 
     def _publish_status(self):
         now = self._now()
@@ -472,7 +720,9 @@ class AuctionNode(Node):
         self.pub_status.publish(st)
 
     def close(self):
-        """Close the event log."""
+        """Close the event log (and log the loss counters)."""
+        if self.link_loss is not None:
+            self.link_loss.log(self._now())
         if self.log is not None:
             self.log.close()
             self.log = None

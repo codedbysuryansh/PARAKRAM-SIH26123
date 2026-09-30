@@ -50,6 +50,18 @@ reads no peer traffic), the dashboard or the ground-truth monitor.
 The network-level mechanism (`tc netem`) and the Benchmark #2 sweep live in `parakram_bench`
 (see its README).
 
+## Fleet-wide per-link loss (CLAUDE_CODE/06, `loss_scope:=fleet`)
+
+`link_loss.py`: one loss process per directed link (receiver, sender) over 50 ms sim-time
+slots, seeded from the run seed and the two robot ids (Bernoulli, or Gilbert-Elliott with the 05
+burst correlation). Every node of a robot (coordination, auction, watchdog) filters every
+inter-robot subscription through it after delivery, so no retransmission hides a loss and one
+fade hits renewals, heartbeats and task traffic alike. `/fleet/fault_injection` (JSON
+`{"partition": "<robot>" | "*", "t0": .., "t1": ..}`, sim time) cuts every link of one robot
+(or all) for an interval without touching the simulator's own network. Counters:
+`comms_<ns>_{coord,tasks,fault}.csv`. The 05 path (`loss_scope:=coordination`, peer state /
+intent at coordination only) is unchanged and stays the default.
+
 ## Fabrics: how to switch
 
 PARAKRAM nodes are plain rclpy with the profiles above; the fabric is chosen per shell.

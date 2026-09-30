@@ -1,6 +1,7 @@
-# parakram_bench — benchmark harness (CLAUDE_CODE/05 part; the rest is CLAUDE_CODE/07)
+# parakram_bench — benchmark harness (CLAUDE_CODE/05-06 parts; the rest is CLAUDE_CODE/07)
 
-What exists so far is the Benchmark #2 loss sweep and the netem check of CLAUDE_CODE/05.
+What exists so far is the Benchmark #2 loss sweep and the netem check of CLAUDE_CODE/05, and the
+recovery sweep (money shot), partition and blackout trials of CLAUDE_CODE/06.
 
 ## Benchmark #2: throughput and collisions vs packet loss (`run_loss_sweep.py`)
 
@@ -100,6 +101,48 @@ with p95 <= 3 ms.
   30 %, no delivery at all at 60 %, and no recovery within 10 s of the loss being removed. The
   publisher kept its 10 Hz (400 / 400 messages sent) and the data took one direct TCP link, so
   this is TCP under loss, not the probe. See the parakram_comms README for what it means.
+
+## CLAUDE_CODE/06: recovery after a silent kill vs loss (`run_recovery_sweep.py`)
+
+```bash
+python3 -m parakram_bench.run_recovery_sweep --modes parakram,reauction_baseline --loss 0:60:10 --seeds 5 --plot
+python3 -m parakram_bench.run_recovery_sweep --modes parakram --kind s4 --loss 0 --seeds 3
+python3 -m parakram_bench.run_recovery_sweep --modes parakram --kind blackout --loss 0 --seeds 3
+python3 -m parakram_bench.run_recovery_sweep --aggregate-only --sweep-dir bench/logs/recovery_sweep_<id>
+```
+
+One trial at a time, headless (it owns the machine: `bench/logs/SIM_BUSY`): `fleet_sim.launch.py
+scenario:=junction_stream loss_scope:=fleet recovery_mode:=lease|release loss:=<p>`, the trial
+monitor (`recovery_monitor.py`, observer + fault injector + ground-truth referee), then
+coordination, the fault layer and the auction. `parakram` = `recovery_mode:=lease`,
+`reauction_baseline` = `release` (parakram_fault README). Both modes run the same scenario, task
+stream, watchdog and per-link loss on every inter-robot topic.
+
+- **s3** (the money shot): after a 20 s warm-up the monitor waits for a robot that holds a task
+  and reserves the junction (5,6) while its body is outside it and another robot's route needs
+  it (first 30 s: that robot blocked or slow; then any), SIGKILLs its coordination, auction and
+  fault processes and cancels its Nav2 goal (the body stays), and observes 90 s.
+- **s4**: one busy robot isolated (100 % loss on its links only, `/fleet/fault_injection`) for
+  30 s, then healed; **blackout**: every link down for 5 s (false-positive test).
+
+Per trial (`bench/logs/<run_id>/recovery_trial.json`, and a `summary` RecoveryEvent with t_kill,
+t_lease_expire, t_space_reclaimed, t_task_reassigned, loss, dead_id, task_id): ground-truth
+contacts (footprint distance <= 1 cm, every pair, the dead body included); **liveness
+restoration** = kill -> the victim's reserved space free at EVERY survivor (`lease_expire_all_s`;
+PARAKRAM: lease expiry; baseline: release message) - the Gate 2 metric, the quantity L(1+rho)
+bounds; **re-acquisition** = kill -> a survivor holds movement authority over a cell the victim
+reserved (`restoration_s`: adds claim settle + acknowledgement, and traffic); ground-truth entry
+into the junction; detection; task reassignment; tasks completed in the window; duplicate
+completions; robots whose renewals carried the same task at overlapping times, and whether both
+moved then (concurrent execution). s4 / blackout add the isolated robot's movement, lease expiry
+of it at every survivor, heal times and travel during the partition.
+
+Per sweep (`bench/logs/recovery_sweep_<id>/`): `runs.csv` (every attempt; a trial without a
+trigger moment is retried, `--retries`), `sweep_manifest.json` (+ `amendments`), and the outputs
+(also in `results/`): per mode and level mean / std / 95 % CI (Student t) of both metrics, a trial
+without the event within the window counting as the window (censored); regression slope vs loss
+with its 95 % CI; the Gate 1 / Gate 2 checks and per-mode at-most-once. Results and scope:
+`results/README.md`. Unit tests: `test/test_recovery_sweep.py` (statistics and gates).
 
 ## Claim status
 

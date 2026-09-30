@@ -1,0 +1,65 @@
+{
+  "amendments": [
+    {
+      "at_utc": "2026-09-29T15:16:48.768032+00:00",
+      "note": "reauction_baseline fix after trial 11: its ReAuction now also re-announces a dead robot's task another survivor has already re-opened (CLAUDE_CODE/06 'two peers both re-auction -> idempotent (task seq)'), so every survivor sends its own newer round; before it, the first announcer could wait for another robot's round (56.6 s at 0 pct loss, run 6ea3bef9). The 6 baseline attempts run before the fix are kept in runs_baseline_superseded.csv (all attempts: runs_before_baseline_fix.csv) and were re-run; the PARAKRAM trials (lease mode: award-gate code path, unchanged) are kept."
+    },
+    {
+      "at_utc": "2026-09-29T20:47:12.201270+00:00",
+      "note": "task-layer fix after the first full pass: two awards of ONE auction round (two announcers that missed each other under loss) persisted when the winning Award message was lost (run a548032c, 40 pct: both robots worked on task_001 for 77 s). The award announcer now rides on renewal intents (Intent.task_announcer, from TaskProgress.announcer_id) and digests (TaskDigest.award_announcers), so the lower announcer wins within one delivery; a new award waits award_settle = 1 s before it is worked on. Lease mode (award gate) only: the reauction_baseline code path is unchanged, its trials are kept. The 43 PARAKRAM attempts of the first pass are kept in runs_parakram_superseded.csv (all attempts: runs_before_task_tie_fix.csv) and PARAKRAM was re-run."
+    }
+  ],
+  "blackout": 5.0,
+  "burst_corr": 0.8,
+  "command": "python3 -m parakram_bench.run_recovery_sweep --modes parakram,reauction_baseline --loss 0:60:10 --seeds 5 --plot",
+  "created_utc": "2026-09-29T14:24:06.274618+00:00",
+  "git_dirty": true,
+  "git_sha": "ac17ebc82f3d42d11de8164dc57bc82aff1b9866",
+  "ground_truth": "Gazebo /ground_truth/poses (parakram_bench.recovery_monitor)",
+  "host": "suryansh-singh-Parallels-ARM-Virtual-Machine",
+  "kind": "s3",
+  "lease_ttl": 2.0,
+  "levels": [
+    0,
+    10,
+    20,
+    30,
+    40,
+    50,
+    60
+  ],
+  "log_root": "/home/suryansh-singh/parakram_ws/bench/logs",
+  "loss_model": "bernoulli",
+  "loss_scope": "fleet (every inter-robot topic, per-link process)",
+  "mode_map": {
+    "parakram": "lease",
+    "reauction_baseline": "release"
+  },
+  "modes": [
+    "parakram",
+    "reauction_baseline"
+  ],
+  "n_robots": 3,
+  "n_tasks": 80,
+  "partition": 30.0,
+  "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.39",
+  "post_window": 90.0,
+  "rho": 0.0,
+  "rmw_implementation": "default",
+  "ros_distro": "jazzy",
+  "scenario": "junction_stream",
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "sweep_id": "24912b37",
+  "task_rate": 0.25,
+  "trigger_primary": 30.0,
+  "trigger_timeout": 180.0,
+  "warmup": 20.0,
+  "work_order": "CLAUDE_CODE/06",
+  "workspace_root": "/home/suryansh-singh/parakram_ws"
+}

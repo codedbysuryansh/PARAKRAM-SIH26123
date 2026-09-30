@@ -38,7 +38,8 @@ def _setup(context):
 
     cfg = {k: LaunchConfiguration(k).perform(context) for k in (
         'n_robots', 'scenario', 'assign_duration', 'run_dir', 'roster', 'reactive_only',
-        'loss', 'seed', 'loss_model', 'loss_burst_corr') + NODE_PARAMS}
+        'loss', 'seed', 'loss_model', 'loss_burst_corr', 'loss_scope', 'recovery_mode')
+        + NODE_PARAMS}
     n_robots = int(cfg['n_robots'])
     run_dir = cfg['run_dir'] or os.path.realpath(os.path.join(rm.default_log_root(), 'latest'))
     os.makedirs(run_dir, exist_ok=True)
@@ -53,7 +54,9 @@ def _setup(context):
             'seed': int(cfg['seed'] or fleet.get('seed', 0)),
             'loss_model': cfg['loss_model'] or fleet_args.get('loss_model') or 'bernoulli',
             'loss_burst_corr': float(cfg['loss_burst_corr'] or
-                                     fleet_args.get('loss_burst_corr') or 0.8)}
+                                     fleet_args.get('loss_burst_corr') or 0.8),
+            'loss_scope': cfg['loss_scope'] or fleet_args.get('loss_scope') or 'coordination'}
+    recovery_mode = cfg['recovery_mode'] or fleet_args.get('recovery_mode') or 'lease'
     goals_file = os.path.join(get_package_share_directory('parakram_coord'), 'config',
                               'crossing_goals.yaml')
     with open(goals_file) as f:
@@ -69,7 +72,7 @@ def _setup(context):
         ns = f'robot{i}'
         fixed = [int(v) for cell in goals.get(ns, []) for v in cell]
         per_robot[ns] = fixed
-        params = dict(node_params, robot_id=ns, **loss,
+        params = dict(node_params, robot_id=ns, **loss, recovery_mode=recovery_mode,
                       reactive_only=_truthy(cfg['reactive_only']),
                       fixed_assign_duration=float(cfg['assign_duration']), log_dir=run_dir,
                       grid_yaml=grid_yaml, use_sim_time=True)
@@ -83,7 +86,8 @@ def _setup(context):
         actions.append(Node(package='parakram_coord', executable='roster_helper',
                             name='roster_helper', output='screen'))
     manifest = {'kind': 'coord', 'launch_args': cfg, 'node_params': node_params,
-                'fixed_goals': per_robot, 'goals_file': goals_file, 'app_level_loss': loss}
+                'fixed_goals': per_robot, 'goals_file': goals_file, 'app_level_loss': loss,
+                'recovery_mode': recovery_mode}
     with open(os.path.join(run_dir, 'coord_manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     actions.insert(0, LogInfo(msg=f'[parakram_coord] logging to {run_dir}'))
@@ -114,6 +118,10 @@ def generate_launch_description():
          DeclareLaunchArgument('loss_model', default_value='',
                                description="bernoulli | gilbert_elliott (default: fleet's)"),
          DeclareLaunchArgument('loss_burst_corr', default_value='',
-                               description='Gilbert-Elliott burst correlation (default 0.8)')]
+                               description='Gilbert-Elliott burst correlation (default 0.8)'),
+         DeclareLaunchArgument('loss_scope', default_value='',
+                               description="coordination | fleet (default: the fleet's)"),
+         DeclareLaunchArgument('recovery_mode', default_value='',
+                               description="lease | release (default: the fleet's)")]
         + [DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()]
         + [OpaqueFunction(function=_setup)])

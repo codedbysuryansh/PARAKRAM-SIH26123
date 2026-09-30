@@ -3,9 +3,18 @@
 <package format="3">
   <name>parakram_fault</name>
   <version>0.1.0</version>
-  <description>PARAKRAM: Heartbeat, watchdog and recovery trigger. Scaffold only; implemented in CLAUDE_CODE/06.</description>
+  <description>PARAKRAM: Heartbeat (= lease renewal), windowed watchdog and task-recovery trigger (CLAUDE_CODE/06).</description>
   <maintainer email="suryanshsinghvns@gmail.com">Suryansh Singh</maintainer>
   <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>parakram_msgs</exec_depend>
+  <exec_depend>parakram_comms</exec_depend>
+  <exec_depend>parakram_bringup</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -1,0 +1,46 @@
+{
+  "blackout": 5.0,
+  "burst_corr": 0.8,
+  "command": "python3 -m parakram_bench.run_recovery_sweep --modes parakram --kind blackout --loss 0 --seeds 3",
+  "created_utc": "2026-09-29T23:36:48.752324+00:00",
+  "git_dirty": true,
+  "git_sha": "ac17ebc82f3d42d11de8164dc57bc82aff1b9866",
+  "ground_truth": "Gazebo /ground_truth/poses (parakram_bench.recovery_monitor)",
+  "host": "suryansh-singh-Parallels-ARM-Virtual-Machine",
+  "kind": "blackout",
+  "lease_ttl": 2.0,
+  "levels": [
+    0
+  ],
+  "log_root": "/home/suryansh-singh/parakram_ws/bench/logs",
+  "loss_model": "bernoulli",
+  "loss_scope": "fleet (every inter-robot topic, per-link process)",
+  "mode_map": {
+    "parakram": "lease",
+    "reauction_baseline": "release"
+  },
+  "modes": [
+    "parakram"
+  ],
+  "n_robots": 3,
+  "n_tasks": 80,
+  "partition": 30.0,
+  "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.39",
+  "post_window": 90.0,
+  "rho": 0.0,
+  "rmw_implementation": "default",
+  "ros_distro": "jazzy",
+  "scenario": "junction_stream",
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "sweep_id": "b6c50a5e",
+  "task_rate": 0.25,
+  "trigger_primary": 30.0,
+  "trigger_timeout": 180.0,
+  "warmup": 20.0,
+  "work_order": "CLAUDE_CODE/06",
+  "workspace_root": "/home/suryansh-singh/parakram_ws"
+}

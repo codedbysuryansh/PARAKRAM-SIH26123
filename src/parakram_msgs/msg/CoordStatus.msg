@@ -15,3 +15,9 @@ uint32   goals_completed
 uint8    n_peers            # peers with a valid (unexpired) lease
 float32  tick_compute_ms
 string   note               # e.g. "evacuating for robot2", "goal cell physically occupied"
+# --- CLAUDE_CODE/06 lease state (read by the robot's own task layer) -------------------------
+bool     lease_valid        # own spatial lease acknowledged by every live peer and a quorum heard
+builtin_interfaces/Time task_renewal_acked   # oldest, over live peers, of the latest ACKED
+                            # renewal that carried the current task award (0: none acknowledged)
+string   task_id            # the award the intents are renewing
+uint32   task_seq

@@ -1,0 +1,84 @@
+{
+  "sweep_id": "b6c50a5e",
+  "sweep_dir": "/home/suryansh-singh/parakram_ws/bench/logs/recovery_sweep_b6c50a5e",
+  "generated_utc": "2026-09-29T23:44:26.023286+00:00",
+  "claim_status": "SIMULATION acceptance evidence (CLAUDE_CODE/06); TARGET/sim in the CLAIMS_LEDGER until hardware",
+  "manifest": {
+    "created_utc": "2026-09-29T23:36:48.752324+00:00",
+    "host": "suryansh-singh-Parallels-ARM-Virtual-Machine",
+    "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.39",
+    "ros_distro": "jazzy",
+    "rmw_implementation": "default",
+    "workspace_root": "/home/suryansh-singh/parakram_ws",
+    "git_sha": "ac17ebc82f3d42d11de8164dc57bc82aff1b9866",
+    "git_dirty": true,
+    "kind": "blackout",
+    "sweep_id": "b6c50a5e",
+    "work_order": "CLAUDE_CODE/06",
+    "modes": [
+      "parakram"
+    ],
+    "mode_map": {
+      "parakram": "lease",
+      "reauction_baseline": "release"
+    },
+    "levels": [
+      0
+    ],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "scenario": "junction_stream",
+    "n_robots": 3,
+    "loss_model": "bernoulli",
+    "burst_corr": 0.8,
+    "loss_scope": "fleet (every inter-robot topic, per-link process)",
+    "n_tasks": 80,
+    "task_rate": 0.25,
+    "warmup": 20.0,
+    "trigger_primary": 30.0,
+    "trigger_timeout": 180.0,
+    "post_window": 90.0,
+    "partition": 30.0,
+    "blackout": 5.0,
+    "lease_ttl": 2.0,
+    "rho": 0.0,
+    "ground_truth": "Gazebo /ground_truth/poses (parakram_bench.recovery_monitor)",
+    "command": "python3 -m parakram_bench.run_recovery_sweep --modes parakram --kind blackout --loss 0 --seeds 3",
+    "log_root": "/home/suryansh-singh/parakram_ws/bench/logs"
+  },
+  "curve": [
+    {
+      "mode": "parakram",
+      "loss_pct": 0,
+      "n_runs": 3,
+      "freed_all_n": 0,
+      "freed_all_mean": 90.0,
+      "freed_all_std": 0.0,
+      "freed_all_ci95": 0.0,
+      "freed_all_median": 90.0,
+      "freed_all_max": 90.0,
+      "reacquired_n": 0,
+      "reacquired_mean": 90.0,
+      "reacquired_std": 0.0,
+      "reacquired_ci95": 0.0,
+      "reacquired_max": 90.0,
+      "entered_mean": null,
+      "entered_max": null,
+      "freed_first_mean": null,
+      "detect_mean": null,
+      "task_reassigned_mean": null,
+      "contacts_total": 0,
+      "duplicates_total": 0,
+      "concurrent_execution_total": 0,
+      "throughput_mean": 2.0,
+      "throughput_std": 0.0,
+      "freezes_mean": 3.0,
+      "run_ids": "ae3d6346-5255-4ae1-9c33-97e0a7c48771 1ef950a0-a927-4d14-9f4c-d0a1e6715b73 906229c4-1503-4d90-b9ae-143573218956"
+    }
+  ],
+  "checks": {},
+  "attempts_not_ok": []
+}

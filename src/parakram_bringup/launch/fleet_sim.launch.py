@@ -48,7 +48,7 @@ def _setup(context):
         'n_robots', 'scenario', 'seed', 'loss', 'gui', 'render_engine', 'software_gl',
         'lidar_noise_std', 'lidar_rate', 'log_level', 'run_id', 'nav2_start_delay',
         'nav2_stagger', 'use_composition', 'clock_period', 'safety', 'safety_enabled',
-        'loss_model', 'loss_burst_corr')}
+        'loss_model', 'loss_burst_corr', 'loss_scope', 'recovery_mode')}
     n_robots = int(cfg['n_robots'])
     seed = int(cfg['seed'])
     loss = float(cfg['loss'])
@@ -56,6 +56,10 @@ def _setup(context):
         raise RuntimeError(f'loss:={loss} must be in [0, 1) (CLAUDE_CODE/05 sweep: 0.0-0.6)')
     if cfg['loss_model'] not in ('bernoulli', 'gilbert_elliott'):
         raise RuntimeError(f"loss_model:={cfg['loss_model']} must be bernoulli or gilbert_elliott")
+    if cfg['loss_scope'] not in ('coordination', 'fleet'):
+        raise RuntimeError(f"loss_scope:={cfg['loss_scope']} must be coordination or fleet")
+    if cfg['recovery_mode'] not in ('lease', 'release'):
+        raise RuntimeError(f"recovery_mode:={cfg['recovery_mode']} must be lease or release")
 
     sim_share = get_package_share_directory('parakram_sim')
     bringup_share = get_package_share_directory('parakram_bringup')
@@ -179,6 +183,11 @@ def generate_launch_description():
                               description='bernoulli | gilbert_elliott (bursty)'),
         DeclareLaunchArgument('loss_burst_corr', default_value='0.8',
                               description='Gilbert-Elliott burst correlation rho'),
+        DeclareLaunchArgument('loss_scope', default_value='coordination',
+                              description='coordination (05: peer state/intent only) | fleet '
+                                          '(06: every inter-robot topic, per-link process)'),
+        DeclareLaunchArgument('recovery_mode', default_value='lease',
+                              description='lease (PARAKRAM) | release (06 reauction_baseline)'),
         DeclareLaunchArgument('gui', default_value='false', description='start the gz GUI'),
         DeclareLaunchArgument('render_engine', default_value='ogre',
                               description='gz server render engine (ogre on the VM; ogre2 on '

@@ -212,13 +212,19 @@ class PibtCoordinator:
         return int(priority) + int(math.floor(self.p.priority_grow_rate * now))
 
     # ------------------------------------------------------------------ the tick
-    def tick(self, now, center, occupied, table, committed=frozenset()):
+    def tick(self, now, center, occupied, table, committed=frozenset(),
+             obstacles=frozenset(), frozen=False, claim_acked=None):
         """
         Run one coordination step.
 
         ``center``: cell containing the robot centre; ``occupied``: cells its safety disk
         overlaps; ``table``: ReservationTable of peer intents (pruned here);
         ``committed``: claimed cells the robot can no longer stop before entering.
+        CLAUDE_CODE/06 (defaults = the 02 behaviour): ``obstacles``: cells a silent robot's
+        body may occupy (ghosts), blocked and never claimed; ``frozen``: my own lease may have
+        expired somewhere, so no claims and no authority beyond the centre until it is
+        re-acquired; ``claim_acked(cell)``: a claim becomes authority only once every live
+        peer has acknowledged it.
         """
         p = self.p
         self._last_tick = now
@@ -272,6 +278,7 @@ class PibtCoordinator:
                     near = set(e.planned[1:1 + H])
                     blocked |= near
                     desire |= near
+        blocked |= set(obstacles)
         blocked -= occupied | committed
 
         # 3) plan
@@ -288,6 +295,8 @@ class PibtCoordinator:
 
         # 4) claims (in order, contiguous) + race resolution
         want = moving_prefix(plan)[:p.reserve_k]
+        if frozen:
+            want = []                                # lease lapsed: re-acquire before moving
         keep_committed = [c for c, _ in self.claims if c in committed]
         if keep_committed and (not want or want[0] != keep_committed[0]):
             want = keep_committed[:1]          # already entering it: finish entering, stop there
@@ -309,7 +318,7 @@ class PibtCoordinator:
             if c in committed:
                 new_claims.append((c, old.get(c, now)))
                 continue
-            if c in occupied_by:
+            if c in occupied_by or c in obstacles:
                 yielded = True
                 break
             if c not in old and (c in reserved_by or c in desire):
@@ -323,7 +332,8 @@ class PibtCoordinator:
         # 5) movement authority = contiguous HELD claims
         authority = [center]
         for c, t0 in new_claims:
-            if c in committed or now - t0 >= p.claim_settle:
+            if c in committed or (now - t0 >= p.claim_settle and not frozen and
+                                  (claim_acked is None or claim_acked(c))):
                 authority.append(c)
             else:
                 break
@@ -379,6 +389,8 @@ class PibtCoordinator:
                 note = 'deadlock breaker: re-route requested'
             if not note:
                 note = self._blocked_note(stuck, authority, reserved_by, occupied_by)
+        if frozen and not note.startswith('deadlock'):
+            note = 'own lease not acknowledged: stopped, re-acquiring'
 
         if yielded and not self._yielding:
             self.yields += 1

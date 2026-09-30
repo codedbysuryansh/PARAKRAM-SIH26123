@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'parakram_fault'
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +28,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'heartbeat_node = parakram_fault.heartbeat_node:main',
+            'watchdog_node = parakram_fault.watchdog_node:main',
+            'recovery_coordinator = parakram_fault.recovery_coordinator:main',
+            'recovery_logger = parakram_fault.recovery_logger:main',
         ],
     },
 )

@@ -183,3 +183,19 @@ scenarios:
     task_stations:
       pickup: [[3, 3], [3, 9], [7, 3], [7, 9]]
       dropoff: [[0, 0], [0, 12], [10, 0], [10, 12]]
+  junction_stream:
+    description: >-
+      CLAUDE_CODE/06 recovery benchmark (S3 silent kill, S4 partition). Stations at the four
+      ends of the central cross, off its lanes: pickups west (c3 aisle) and south (ring row 0),
+      dropoffs east (c9 aisle) and north (ring row 10). Every route, both ways, crosses the
+      central junction (5, 6), east-west, north-south or turning there, so robots meet at it at
+      right angles all the time: the place where a silently dead robot's lease (not its body)
+      blocks the fleet.
+    start_cells:
+      - [5, 4, 0]      # robot1: west arm, facing east
+      - [5, 8, 180]    # robot2: east arm, facing west
+      - [3, 6, 90]     # robot3: south arm, facing north
+      - [7, 6, -90]    # robot4: north arm, facing south
+    task_stations:
+      pickup: [[3, 3], [0, 6]]
+      dropoff: [[7, 9], [10, 6]]

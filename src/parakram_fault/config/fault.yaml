@@ -1,0 +1,11 @@
+# CLAUDE_CODE/06 fault layer parameters (parakram_fault/launch/fault.launch.py).
+# The lease itself (L = coordination lease_ttl, 2.0 s) lives in coord.launch.py; these only drive
+# the watchdog (task reallocation), never safety or liveness.
+hb_hz: 10.0             # lease renewals per second (the coordination tick)
+lease_time: 2.0         # L [s], informational here: coordination's lease_ttl
+window: 2.0             # [s] sliding window for the delivery estimate
+detect_timeout: 1.0     # [s] silence -> SUSPECT (and DEAD for the re-auction baseline)
+partition_grace: 10.0   # [s] silence everywhere -> DEAD (PARAKRAM); shorter silences never
+                        #     reallocate a (possibly partitioned) robot's task
+flaky_below: 0.5        # window delivery below this -> FLAKY
+clock_drift_rho: 0.0    # rho for the L(1 + rho) bound: one /clock in simulation

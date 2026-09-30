@@ -24,7 +24,8 @@ AUCTION_PARAMS = {'bid_window': '1.0', 'award_timeout': '2.0', 'award_lease_ttl'
                   'renew_period': '2.0', 'announce_jitter_min': '0.2',
                   'announce_jitter_max': '1.0', 'backoff_max': '8.0', 'service_time': '1.0',
                   'stall_timeout': '60.0', 'plan_speed': '0.15', 'battery_min': '0.2',
-                  'heartbeat_timeout': '3.0'}
+                  'heartbeat_timeout': '3.0', 'award_margin': '2.0', 'digest_period': '1.0',
+                  'award_settle': '1.0'}
 
 
 def _truthy(value):
@@ -47,6 +48,16 @@ def _setup(context):
     except (OSError, ValueError):
         pass
     seed = int(cfg['seed'] or fleet.get('seed', 1))
+    fleet_args = fleet.get('launch_args', {})
+    # CLAUDE_CODE/06: loss on the task topics only with the fleet-wide scope (05 never touched
+    # them); the recovery mode follows the fleet
+    scope = fleet_args.get('loss_scope') or 'coordination'
+    mode = fleet_args.get('recovery_mode') or 'lease'
+    w06 = {'recovery_mode': mode, 'award_gate': mode == 'lease',
+           'loss_scope': 'fleet' if scope == 'fleet' else 'none',
+           'loss': float(fleet.get('loss', 0.0)) if scope == 'fleet' else 0.0,
+           'loss_model': fleet_args.get('loss_model') or 'bernoulli',
+           'loss_burst_corr': float(fleet_args.get('loss_burst_corr') or 0.8)}
     scenario = cfg['scenario'] or fleet.get('scenario') or 'warehouse_stream'
     grid_yaml = os.path.join(get_package_share_directory('parakram_sim'), 'config',
                              'warehouse_grid.yaml')
@@ -60,7 +71,7 @@ def _setup(context):
                             name='auction_node', namespace=ns, output='screen',
                             parameters=[dict(params, robot_id=ns, peers=robots, seed=seed,
                                              log_dir=run_dir, grid_yaml=grid_yaml,
-                                             use_sim_time=use_sim_time)]))
+                                             use_sim_time=use_sim_time, **w06)]))
     if _truthy(cfg['generator']):
         actions.append(Node(package='parakram_tasks', executable='task_generator',
                             name='task_generator', output='screen',
@@ -69,7 +80,7 @@ def _setup(context):
                                          'scenario': scenario, 'grid_yaml': grid_yaml,
                                          'use_sim_time': use_sim_time}]))
     manifest = {'kind': 'tasks', 'launch_args': cfg, 'seed': seed, 'scenario': scenario,
-                'auction_params': params, 'robots': robots}
+                'auction_params': params, 'robots': robots, 'w06': w06}
     with open(os.path.join(run_dir, 'tasks_manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2, sort_keys=True)
     return actions
